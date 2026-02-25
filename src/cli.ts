@@ -110,7 +110,11 @@ program
   .requiredOption("--team <key>", "Team key (e.g. JOS)")
   .option("--description <text>", "Issue description")
   .option("--labels <labels...>", 'Comma-separated labels (default: "needs review")')
-  .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => parseInt(v, 10))
+  .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => {
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 0 || n > 4) throw new Error(`Invalid priority: ${v}. Must be 0-4.`);
+    return n;
+  })
   .option("--project <name>", "Linear project name")
   .option("--state <name>", "Workflow state name")
   .action(async (title: string, opts) => {
