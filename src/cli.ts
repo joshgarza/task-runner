@@ -113,7 +113,7 @@ program
   .description("Create a new Linear issue")
   .requiredOption("--team <key>", "Team key (e.g. JOS)")
   .option("--description <text>", "Issue description")
-  .option("--labels <labels...>", 'Comma-separated labels (default: "needs review")')
+  .option("--labels <labels...>", 'Space-separated labels (default: "needs review")')
   .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => {
     const n = parseInt(v, 10);
     if (isNaN(n) || n < 0 || n > 4) throw new Error(`Invalid priority: ${v}. Must be 0-4.`);
@@ -149,7 +149,7 @@ program
     if (isNaN(n) || n < 0 || n > 4) throw new Error(`Invalid priority: ${v}. Must be 0-4.`);
     return n;
   })
-  .option("--labels <labels...>", "Comma-separated labels (replaces existing)")
+  .option("--labels <labels...>", "Space-separated labels (replaces existing)")
   .option("--status <name>", "Workflow state name")
   .option("--assignee <email>", "Assignee email address")
   .action(async (identifier: string, opts) => {
