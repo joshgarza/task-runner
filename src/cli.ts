@@ -12,7 +12,7 @@ import { editTicket } from "./runner/edit-ticket.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
 import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
 import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, detectProjectFromCwd } from "./config.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -67,9 +67,10 @@ program
   .option("--dry-run", "List agent-ready issues without processing them")
   .action(async (opts) => {
     try {
+      const detected = detectProjectFromCwd();
       const results = await drain({
         label: opts.label,
-        project: opts.project,
+        project: opts.project ?? detected?.project,
         limit: opts.limit,
         concurrency: opts.concurrency,
         dryRun: opts.dryRun,
@@ -106,7 +107,8 @@ program
   .option("--project <project>", "Linear project name to filter by")
   .action(async (opts) => {
     try {
-      await standup({ days: opts.days, project: opts.project });
+      const detected = detectProjectFromCwd();
+      await standup({ days: opts.days, project: opts.project ?? detected?.project });
     } catch (err: any) {
       log("ERROR", "standup", `Standup failed: ${err.message}`);
       process.exit(1);
@@ -116,7 +118,7 @@ program
 program
   .command("add-ticket <title>")
   .description("Create a new Linear issue")
-  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("--team <key>", "Team key (e.g. JOS) — auto-detected from cwd if omitted")
   .option("--description <text>", "Issue description")
   .option("--labels <labels...>", 'Space-separated labels (default: "needs review")')
   .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => {
@@ -128,12 +130,19 @@ program
   .option("--state <name>", "Workflow state name")
   .action(async (title: string, opts) => {
     try {
+      const detected = detectProjectFromCwd();
+      const team = opts.team ?? detected?.team;
+      if (!team) {
+        log("ERROR", "add-ticket", "--team is required (could not auto-detect from cwd)");
+        process.exit(1);
+      }
+
       const result = await addTicket(title, {
-        team: opts.team,
+        team,
         description: opts.description,
         labels: opts.labels,
         priority: opts.priority,
-        project: opts.project,
+        project: opts.project ?? detected?.project,
         state: opts.state,
       });
       console.log(`\nCreated: ${result.identifier}`);
@@ -180,7 +189,7 @@ program
 program
   .command("organize-tickets")
   .description("Triage Linear tickets and label unblocked ones as agent-ready")
-  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("--team <key>", "Team key (e.g. JOS) — auto-detected from cwd if omitted")
   .option("--project <name>", "Linear project name to filter by")
   .option("--states <states...>", "Workflow states to include (default: Todo, Backlog)")
   .option("--add-label <labels...>", "Labels to add to unblocked tickets (default: agent-ready)")
@@ -189,14 +198,23 @@ program
   .option("--dry-run", "Preview changes without applying")
   .action(async (opts) => {
     try {
-      if (opts.context && !opts.project) {
+      const detected = detectProjectFromCwd();
+      const team = opts.team ?? detected?.team;
+      const project = opts.project ?? detected?.project;
+
+      if (!team) {
+        log("ERROR", "organize", "--team is required (could not auto-detect from cwd)");
+        process.exit(1);
+      }
+
+      if (opts.context && !project) {
         log("ERROR", "organize", "--context requires --project to determine the repo path");
         process.exit(1);
       }
 
       const results = await organizeTickets({
-        team: opts.team,
-        project: opts.project,
+        team,
+        project,
         states: opts.states,
         addLabels: opts.addLabel,
         removeLabels: opts.removeLabel,
