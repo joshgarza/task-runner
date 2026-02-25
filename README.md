@@ -34,7 +34,7 @@ The runner handles all git operations (push, PR creation) — agents only commit
 ### Install
 
 ```bash
-cd ~/coding/claude/task-runner
+cd ~/coding/claude/task-runner/main
 npm install
 ```
 
@@ -52,10 +52,10 @@ Edit `task-runner.config.json` to map Linear projects to repos:
 {
   "projects": {
     "my-project": {
-      "repoPath": "/home/user/coding/my-project",
+      "repoPath": "/home/josh/coding/claude/task-runner/main",
       "defaultBranch": "main",
-      "testCommand": "pnpm test",
-      "lintCommand": "pnpm lint"
+      "testCommand": "npm test",
+      "lintCommand": "npm run lint"
     }
   },
   "linear": {
@@ -66,8 +66,8 @@ Edit `task-runner.config.json` to map Linear projects to repos:
   },
   "defaults": {
     "model": "opus",
-    "maxTurns": 30,
-    "maxBudgetUsd": 5.00,
+    "maxTurns": 50,
+    "maxBudgetUsd": 10.00,
     "reviewModel": "opus",
     "reviewMaxTurns": 15,
     "reviewMaxBudgetUsd": 2.00,
@@ -75,13 +75,13 @@ Edit `task-runner.config.json` to map Linear projects to repos:
     "agentTimeoutMs": 900000
   },
   "github": {
-    "prLabels": ["agent-generated"],
+    "prLabels": [],
     "reviewApprovedLabel": "ready-for-human-review"
   }
 }
 ```
 
-Project names in the config must match Linear project names exactly.
+Project names must match Linear project names exactly. `prLabels` defaults to empty (no auto-labels). `reviewApprovedLabel` is optional.
 
 ## Usage
 
@@ -100,6 +100,10 @@ task-runner drain --project my-project --limit 5
 # Review an existing PR standalone
 task-runner review https://github.com/user/repo/pull/42
 
+# Create a new Linear issue
+task-runner add-ticket "Fix login bug" --team JOS
+task-runner add-ticket "Add search" --team JOS --description "Full-text search" --priority 2
+
 # Daily standup digest
 task-runner standup
 task-runner standup --days 7 --project my-project
@@ -110,6 +114,26 @@ All commands are run via:
 ```bash
 node --experimental-strip-types src/cli.ts <command>
 ```
+
+## Development
+
+This repo uses a **bare repo + worktree** layout for branch isolation:
+
+```
+task-runner.git/    # Bare repository
+task-runner/        # Hub directory (not a repo)
+  main/             # main branch worktree (protected)
+  <feature>/        # Feature worktrees (temporary)
+```
+
+```bash
+# From the hub directory (task-runner/)
+./create-worktree.sh feat-my-feature          # Create worktree + install deps
+./remove-worktree.sh feat-my-feature          # Remove after merge
+./check-worktrees.sh                          # Validate all worktrees
+```
+
+Direct commits to `main` are blocked by git hooks. Work on feature worktrees, then PR and merge via GitHub.
 
 ## Pipeline steps
 
