@@ -7,6 +7,7 @@ import { runIssue } from "./runner/run-issue.ts";
 import { drain } from "./runner/drain.ts";
 import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
+import { addTicket } from "./runner/add-ticket.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -99,6 +100,31 @@ program
       await standup({ days: opts.days, project: opts.project });
     } catch (err: any) {
       log("ERROR", "standup", `Standup failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("add-ticket <title>")
+  .description("Create a new Linear issue")
+  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("-d, --description <text>", "Issue description")
+  .option("-l, --label <labels...>", "Labels to apply (default: needs review)")
+  .option("-p, --priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => parseInt(v, 10))
+  .option("--project <name>", "Linear project name")
+  .option("--state <name>", "Initial workflow state")
+  .action(async (title: string, opts) => {
+    try {
+      await addTicket(title, {
+        team: opts.team,
+        description: opts.description,
+        label: opts.label,
+        priority: opts.priority,
+        project: opts.project,
+        state: opts.state,
+      });
+    } catch (err: any) {
+      log("ERROR", null, `Add ticket failed: ${err.message}`);
       process.exit(1);
     }
   });

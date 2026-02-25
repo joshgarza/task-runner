@@ -109,6 +109,17 @@ export interface RunResult {
   attempts: number;
 }
 
+// --- Add Ticket ---
+
+export interface AddTicketOptions {
+  team: string;
+  description?: string;
+  label?: string[];
+  priority?: number;
+  project?: string;
+  state?: string;
+}
+
 // --- Agent ---
 
 export interface AgentResult {
