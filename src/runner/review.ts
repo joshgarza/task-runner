@@ -78,7 +78,7 @@ Approve if: tests pass, lint passes, no critical issues, at most 2 major issues.
     model: config.defaults.reviewModel,
     maxTurns: config.defaults.reviewMaxTurns,
     maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
-    toolsFile: "review-tools.json",
+    agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `review-${prNumber}`,
   });

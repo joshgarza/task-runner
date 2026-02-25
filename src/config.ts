@@ -74,6 +74,7 @@ export function loadConfig(): TaskRunnerConfig {
     projects: raw.projects ?? {},
     linear: {
       agentLabel: raw.linear?.agentLabel ?? "agent-ready",
+      needsApprovalLabel: raw.linear?.needsApprovalLabel ?? "needs-human-approval",
       inProgressState: raw.linear?.inProgressState ?? "In Progress",
       inReviewState: raw.linear?.inReviewState ?? "In Review",
       todoState: raw.linear?.todoState ?? "Todo",

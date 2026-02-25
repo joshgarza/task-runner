@@ -37,7 +37,7 @@ function gatherContext(issue: LinearIssue, repoPath: string): ContextResult | nu
     model: config.defaults.contextModel,
     maxTurns: config.defaults.contextMaxTurns,
     maxBudgetUsd: config.defaults.contextMaxBudgetUsd,
-    toolsFile: "context-tools.json",
+    agentType: "context",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `context-${issue.identifier}`,
   });

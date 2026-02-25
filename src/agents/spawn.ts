@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "../logger.ts";
+import { loadRegistry, resolveAgentType } from "./registry.ts";
 import type { AgentResult } from "../types.ts";
 
 const AGENTS_DIR = import.meta.dirname;
@@ -20,9 +21,40 @@ export interface SpawnOptions {
   model: string;
   maxTurns: number;
   maxBudgetUsd: number;
-  toolsFile: string;
+  toolsFile?: string;   // legacy: load tools from JSON file
+  agentType?: string;    // new: resolve tools from agent registry
   timeoutMs: number;
   context: string; // for logging
+}
+
+/**
+ * Resolve the tool whitelist and caps from either agentType or toolsFile.
+ * agentType takes precedence. Enforces budget/turns caps from registry.
+ */
+function resolveSpawnTools(opts: SpawnOptions): {
+  tools: string[];
+  maxTurns: number;
+  maxBudgetUsd: number;
+} {
+  if (opts.agentType) {
+    const registry = loadRegistry();
+    const resolved = resolveAgentType(opts.agentType, registry);
+    return {
+      tools: resolved.tools,
+      maxTurns: Math.min(opts.maxTurns, resolved.maxTurns),
+      maxBudgetUsd: Math.min(opts.maxBudgetUsd, resolved.maxBudgetUsd),
+    };
+  }
+
+  if (opts.toolsFile) {
+    return {
+      tools: loadToolWhitelist(opts.toolsFile),
+      maxTurns: opts.maxTurns,
+      maxBudgetUsd: opts.maxBudgetUsd,
+    };
+  }
+
+  throw new Error("SpawnOptions requires either agentType or toolsFile");
 }
 
 /**
@@ -30,19 +62,20 @@ export interface SpawnOptions {
  * Returns structured result with output, stderr, timing.
  */
 export function spawnAgent(opts: SpawnOptions): AgentResult {
-  const tools = loadToolWhitelist(opts.toolsFile);
+  const { tools, maxTurns, maxBudgetUsd } = resolveSpawnTools(opts);
 
   const claudeArgs = [
     "-p",
     "--model", opts.model,
-    "--max-turns", opts.maxTurns.toString(),
-    "--max-budget-usd", opts.maxBudgetUsd.toString(),
+    "--max-turns", maxTurns.toString(),
+    "--max-budget-usd", maxBudgetUsd.toString(),
     "--permission-mode", "bypassPermissions",
     "--output-format", "json",
     "--allowedTools", ...tools,
   ];
 
-  log("INFO", opts.context, `Spawning claude ${opts.model} (max-turns: ${opts.maxTurns}, budget: $${opts.maxBudgetUsd})`);
+  const agentLabel = opts.agentType ? `[${opts.agentType}]` : `[${opts.toolsFile}]`;
+  log("INFO", opts.context, `Spawning claude ${opts.model} ${agentLabel} (max-turns: ${maxTurns}, budget: $${maxBudgetUsd})`);
 
   const startTime = Date.now();
   let output = "";

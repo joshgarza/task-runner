@@ -9,6 +9,7 @@ export interface EditTicketOptions {
   description?: string;
   priority?: number;
   labels?: string[];
+  addLabels?: string[];
   status?: string;
   assignee?: string;
 }
@@ -22,11 +23,21 @@ export async function editTicket(
   // Fetch the issue to get its ID and team key
   const issue = await fetchIssue(identifier);
 
+  // If --add-labels is used, merge with existing labels instead of replacing
+  let labelNames = opts.labels;
+  if (opts.addLabels && opts.addLabels.length > 0) {
+    if (labelNames) {
+      log("WARN", "edit-ticket", "--labels and --add-labels both specified; --add-labels takes precedence");
+    }
+    // Merge: existing labels + new labels, deduplicated
+    labelNames = [...new Set([...issue.labels, ...opts.addLabels])];
+  }
+
   await updateIssue(issue.id, issue.teamKey, {
     title: opts.title,
     description: opts.description,
     priority: opts.priority,
-    labelNames: opts.labels,
+    labelNames,
     stateName: opts.status,
     assigneeEmail: opts.assignee,
   });

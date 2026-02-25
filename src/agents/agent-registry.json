@@ -1,0 +1,84 @@
+{
+  "base": {
+    "description": "Minimal-permission agent. Read/write to repo, no system access.",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)"
+    ],
+    "maxBudgetUsd": 5.00,
+    "maxTurns": 30,
+    "audit": {
+      "createdBy": "system",
+      "createdAt": "2026-02-25T00:00:00Z",
+      "reason": "Built-in default"
+    }
+  },
+  "worker": {
+    "description": "Full implementation agent with test/lint/build access.",
+    "extends": "base",
+    "tools": [
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)"
+    ],
+    "maxBudgetUsd": 10.00,
+    "maxTurns": 50,
+    "audit": {
+      "createdBy": "system",
+      "createdAt": "2026-02-25T00:00:00Z",
+      "reason": "Migrated from worker-tools.json"
+    }
+  },
+  "reviewer": {
+    "description": "Read-only review agent with PR and test access. Cannot modify code.",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr view:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx tsc:*)",
+      "Bash(ls:*)"
+    ],
+    "maxBudgetUsd": 2.00,
+    "maxTurns": 15,
+    "audit": {
+      "createdBy": "system",
+      "createdAt": "2026-02-25T00:00:00Z",
+      "reason": "Migrated from review-tools.json"
+    }
+  },
+  "context": {
+    "description": "Minimal read-only agent for codebase exploration. No write access.",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(ls:*)",
+      "Bash(git log:*)"
+    ],
+    "maxBudgetUsd": 0.50,
+    "maxTurns": 10,
+    "audit": {
+      "createdBy": "system",
+      "createdAt": "2026-02-25T00:00:00Z",
+      "reason": "Migrated from context-tools.json"
+    }
+  }
+}
