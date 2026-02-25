@@ -100,23 +100,25 @@ async function runWithConcurrency(
   issues: LinearIssue[],
   concurrency: number
 ): Promise<RunResult[]> {
-  const results: RunResult[] = [];
+  const results: RunResult[] = new Array(issues.length);
 
   if (concurrency <= 1) {
     // Sequential — preserves original behavior
-    for (const issue of issues) {
-      results.push(await processIssue(issue));
+    for (let i = 0; i < issues.length; i++) {
+      results[i] = await processIssue(issues[i]);
     }
     return results;
   }
 
-  // Parallel — process up to `concurrency` issues at a time
+  // Parallel — process up to `concurrency` issues at a time.
+  // Uses indexed assignment so results maintain input order regardless
+  // of which worker resolves first.
   let index = 0;
 
   async function worker(): Promise<void> {
     while (index < issues.length) {
-      const issue = issues[index++];
-      results.push(await processIssue(issue));
+      const i = index++;
+      results[i] = await processIssue(issues[i]);
     }
   }
 
