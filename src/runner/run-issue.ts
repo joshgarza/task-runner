@@ -10,6 +10,10 @@ import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment } from "../git/branch.ts";
 import { spawnAgent } from "../agents/spawn.ts";
+import { loadRegistry } from "../agents/registry.ts";
+import { dispatch } from "../agents/dispatcher.ts";
+import { analyzeFailure } from "../agents/failure-analysis.ts";
+import { createProposal } from "../agents/proposals.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
 import { buildReviewPrompt } from "../agents/review-prompt.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
@@ -97,6 +101,11 @@ export async function runIssue(
   let lastError = "";
   let pipelineSucceeded = false;
 
+  // 5.5. Dispatch: select agent type from registry based on issue labels
+  const registry = loadRegistry();
+  const dispatchResult = dispatch(issue, registry);
+  log("INFO", identifier, `Dispatch: ${dispatchResult.agentType} (${dispatchResult.reason})`);
+
   try {
     // 6. Spawn worker agent (with retry loop)
     for (attempts = 1; attempts <= maxAttempts; attempts++) {
@@ -115,7 +124,7 @@ export async function runIssue(
         model,
         maxTurns,
         maxBudgetUsd,
-        toolsFile: "worker-tools.json",
+        agentType: dispatchResult.agentType,
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
       });
@@ -127,6 +136,7 @@ export async function runIssue(
         JSON.stringify(
           {
             issue: { identifier, title: issue.title },
+            agentType: dispatchResult.agentType,
             output: agentResult.output.slice(0, 50_000),
             stderr: agentResult.stderr.slice(0, 5_000),
             durationMs: agentResult.durationMs,
@@ -141,6 +151,30 @@ export async function runIssue(
       if (!agentResult.success) {
         lastError = `Agent exited with code ${agentResult.exitCode}. stderr: ${agentResult.stderr.slice(0, 1000)}`;
         log("ERROR", identifier, `Agent failed: ${lastError.slice(0, 200)}`);
+
+        // 6.5. Failure analysis: check if this is a permission issue
+        const analysis = analyzeFailure(agentResult.output, agentResult.stderr);
+        if (analysis.category === "permission_denied") {
+          log("WARN", identifier, `Permission denied — creating proposal for capability escalation`);
+          try {
+            const proposal = await createProposal({
+              issue,
+              baseAgentType: dispatchResult.agentType,
+              failureAnalysis: analysis,
+              config,
+            });
+            log("INFO", identifier, `Created proposal ${proposal.id} — ticket needs human approval`);
+          } catch (err: any) {
+            log("WARN", identifier, `Failed to create proposal: ${err.message}`);
+          }
+          return failure(
+            identifier,
+            `Permission denied: agent type "${dispatchResult.agentType}" lacks required capabilities. Proposal created for human approval.`,
+            startTime,
+            attempts
+          );
+        }
+
         continue;
       }
 
@@ -291,7 +325,7 @@ async function runReview(
     model: config.defaults.reviewModel,
     maxTurns: config.defaults.reviewMaxTurns,
     maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
-    toolsFile: "review-tools.json",
+    agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `${identifier}-review`,
   });

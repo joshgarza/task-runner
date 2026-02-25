@@ -12,6 +12,7 @@ export interface ProjectConfig {
 
 export interface LinearConfig {
   agentLabel: string;
+  needsApprovalLabel: string;
   inProgressState: string;
   inReviewState: string;
   todoState: string;
@@ -155,6 +156,60 @@ export interface ContextResult {
   relevantFiles: string[];
   codeContext: string;
   acceptanceCriteria: string[];
+}
+
+// --- Agent Registry ---
+
+export interface AgentTypeAudit {
+  createdBy: string; // "system" for built-ins, "proposal:<id>" for human-approved
+  createdAt: string;
+  reason: string;
+}
+
+export interface AgentTypeDefinition {
+  description: string;
+  extends?: string; // single-level inheritance from another type
+  tools: string[];
+  maxBudgetUsd: number;
+  maxTurns: number;
+  audit: AgentTypeAudit;
+}
+
+export interface ResolvedAgentType {
+  name: string;
+  description: string;
+  tools: string[]; // fully resolved (parent + child, deduplicated)
+  maxBudgetUsd: number;
+  maxTurns: number;
+  audit: AgentTypeAudit;
+}
+
+export interface DispatchResult {
+  agentType: string;
+  reason: string;
+}
+
+export interface FailureAnalysis {
+  category: "permission_denied" | "budget_exhausted" | "timeout" | "implementation_error";
+  missingCapabilities: string[];
+  suggestedTools: string[];
+  confidence: number; // 0-1
+}
+
+export interface AgentProposal {
+  id: string;
+  issueIdentifier: string;
+  issueTitle: string;
+  baseAgentType: string;
+  proposedAgentType: string;
+  proposedTools: string[];
+  proposedMaxBudgetUsd: number;
+  proposedMaxTurns: number;
+  failureAnalysis: FailureAnalysis;
+  status: "pending" | "approved" | "rejected";
+  rejectionReason?: string;
+  createdAt: string;
+  resolvedAt?: string;
 }
 
 // --- Logger ---

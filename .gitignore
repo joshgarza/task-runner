@@ -3,3 +3,4 @@ logs/
 task-runner.config.json
 .env
 .task-runner-worktrees/
+src/agents/proposals/*.json

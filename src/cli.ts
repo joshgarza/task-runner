@@ -10,6 +10,9 @@ import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
+import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
+import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
+import { loadConfig } from "./config.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -152,6 +155,7 @@ program
     return n;
   })
   .option("--labels <labels...>", "Space-separated labels (replaces existing)")
+  .option("--add-labels <labels...>", "Space-separated labels to add (preserves existing)")
   .option("--status <name>", "Workflow state name")
   .option("--assignee <email>", "Assignee email address")
   .action(async (identifier: string, opts) => {
@@ -161,6 +165,7 @@ program
         description: opts.description,
         priority: opts.priority,
         labels: opts.labels,
+        addLabels: opts.addLabels,
         status: opts.status,
         assignee: opts.assignee,
       });
@@ -214,6 +219,110 @@ program
       console.log(`\nTotal: ${labeled} labeled, ${blocked} blocked, ${skipped} skipped`);
     } catch (err: any) {
       log("ERROR", "organize", `Failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("list-agents")
+  .description("Show all registered agent types")
+  .option("--verbose", "Show full tool list for each agent type")
+  .action((opts) => {
+    try {
+      const registry = loadRegistry();
+      const types = listAgentTypes(registry);
+
+      console.log("\n--- Agent Types ---\n");
+      for (const agent of types) {
+        console.log(`  ${agent.name}`);
+        console.log(`    ${agent.description}`);
+        console.log(`    Tools: ${agent.tools.length} | Budget: $${agent.maxBudgetUsd} | Turns: ${agent.maxTurns}`);
+        console.log(`    Created by: ${agent.audit.createdBy}`);
+        if (opts.verbose) {
+          console.log(`    Tools list:`);
+          for (const tool of agent.tools) {
+            console.log(`      - ${tool}`);
+          }
+        }
+        console.log();
+      }
+      console.log(`Total: ${types.length} agent types`);
+    } catch (err: any) {
+      log("ERROR", "list-agents", `Failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("pending-proposals")
+  .description("List agent type proposals awaiting human approval")
+  .option("--all", "Show all proposals (including resolved)")
+  .action((opts) => {
+    try {
+      const proposals = opts.all ? listProposals() : listProposals("pending");
+
+      if (proposals.length === 0) {
+        console.log("\nNo pending proposals.");
+        return;
+      }
+
+      console.log("\n--- Proposals ---\n");
+      for (const p of proposals) {
+        const statusIcon = p.status === "pending" ? "[?]" : p.status === "approved" ? "[+]" : "[-]";
+        console.log(`  ${statusIcon} ${p.id}`);
+        console.log(`    Issue: ${p.issueIdentifier} — ${p.issueTitle}`);
+        console.log(`    Base type: ${p.baseAgentType} → Proposed: ${p.proposedAgentType}`);
+        console.log(`    Missing: ${p.failureAnalysis.missingCapabilities.join(", ") || "unknown"}`);
+        console.log(`    Created: ${p.createdAt}`);
+        if (p.status !== "pending") {
+          console.log(`    Status: ${p.status}${p.rejectionReason ? ` (${p.rejectionReason})` : ""}`);
+        }
+        console.log();
+      }
+
+      const pending = proposals.filter((p) => p.status === "pending").length;
+      console.log(`Total: ${proposals.length} proposals (${pending} pending)`);
+    } catch (err: any) {
+      log("ERROR", "pending-proposals", `Failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("approve-agent <id>")
+  .description("Approve or reject an agent type proposal")
+  .option("--reject", "Reject the proposal instead of approving")
+  .option("--reason <text>", "Reason for rejection (required with --reject)")
+  .action(async (id: string, opts) => {
+    try {
+      // Show proposal details first
+      const proposal = getProposal(id);
+      console.log(`\nProposal: ${proposal.id}`);
+      console.log(`Issue: ${proposal.issueIdentifier} — ${proposal.issueTitle}`);
+      console.log(`Base type: ${proposal.baseAgentType}`);
+      console.log(`Proposed type: ${proposal.proposedAgentType}`);
+      console.log(`Proposed tools:`);
+      for (const tool of proposal.proposedTools) {
+        console.log(`  - ${tool}`);
+      }
+      console.log(`Budget: $${proposal.proposedMaxBudgetUsd} | Turns: ${proposal.proposedMaxTurns}`);
+      console.log();
+
+      if (opts.reject) {
+        if (!opts.reason) {
+          log("ERROR", "approve-agent", "--reason is required when rejecting");
+          process.exit(1);
+        }
+        const result = await rejectProposal(id, opts.reason);
+        console.log(`Rejected proposal ${result.id}`);
+      } else {
+        const config = loadConfig();
+        const result = await approveProposal(id, config);
+        console.log(`Approved proposal ${result.id}`);
+        console.log(`New agent type "${result.proposedAgentType}" added to registry`);
+      }
+    } catch (err: any) {
+      log("ERROR", "approve-agent", `Failed: ${err.message}`);
       process.exit(1);
     }
   });
