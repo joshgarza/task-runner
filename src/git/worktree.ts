@@ -54,9 +54,10 @@ export function createWorktree(
 }
 
 /**
- * Remove a worktree and its branch
+ * Remove a worktree and its local branch.
+ * Pass deleteRemote: true to also delete the remote branch (e.g. on failure rollback).
  */
-export function removeWorktree(repoPath: string, issueId: string): void {
+export function removeWorktree(repoPath: string, issueId: string, deleteRemote = false): void {
   const worktreePath = getWorktreePath(repoPath, issueId);
   const branch = getBranchName(issueId);
 
@@ -78,6 +79,18 @@ export function removeWorktree(repoPath: string, issueId: string): void {
     });
   } catch {
     // Branch may not exist
+  }
+
+  if (deleteRemote) {
+    try {
+      execSync(`git push origin --delete "${branch}"`, {
+        cwd: repoPath,
+        timeout: 15_000,
+        encoding: "utf-8",
+      });
+    } catch {
+      // Remote branch may not exist
+    }
   }
 
   log("INFO", issueId, "Cleaned up worktree and branch");

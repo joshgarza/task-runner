@@ -25,7 +25,7 @@ export async function transitionIssue(
     );
   }
 
-  await client.issueUpdate(issueId, { stateId: targetState.id });
+  await client.updateIssue(issueId, { stateId: targetState.id });
 }
 
 /**
@@ -33,7 +33,7 @@ export async function transitionIssue(
  */
 export async function addComment(issueId: string, body: string): Promise<void> {
   const client = getLinearClient();
-  await client.commentCreate({ issueId, body });
+  await client.createComment({ issueId, body });
 }
 
 /**
@@ -59,7 +59,7 @@ export async function createChildIssue(
     .map((name) => teamLabels.nodes.find((l) => l.name === name)?.id)
     .filter((id): id is string => !!id);
 
-  const result = await client.issueCreate({
+  const result = await client.createIssue({
     teamId: team.id,
     title,
     description,
