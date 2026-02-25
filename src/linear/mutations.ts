@@ -147,7 +147,7 @@ export async function createIssue(opts: {
     }
   }
 
-  const result = await client.issueCreate(payload as any);
+  const result = await client.createIssue(payload as any);
   const issue = await result.issue;
 
   return {
