@@ -90,8 +90,7 @@ export function loadConfig(): TaskRunnerConfig {
     },
     github: {
       prLabels: raw.github?.prLabels ?? ["agent-generated"],
-      reviewApprovedLabel:
-        raw.github?.reviewApprovedLabel ?? "ready-for-human-review",
+      reviewApprovedLabel: raw.github?.reviewApprovedLabel ?? undefined,
     },
   };
 

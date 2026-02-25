@@ -93,7 +93,6 @@ export async function runIssue(
   try {
     worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch);
   } catch (err: any) {
-    await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
   }
 
