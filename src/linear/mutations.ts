@@ -1,5 +1,6 @@
 // Transition state, add comment, create/add issues in Linear
 
+import type { LinearDocument } from "@linear/sdk";
 import { getLinearClient } from "./client.ts";
 import { log } from "../logger.ts";
 
@@ -94,7 +95,7 @@ export async function updateIssue(
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${teamKey}`);
 
-  const payload: Record<string, unknown> = {};
+  const payload: LinearDocument.IssueUpdateInput = {};
 
   if (opts.title !== undefined) {
     payload.title = opts.title;
@@ -151,7 +152,7 @@ export async function updateIssue(
     throw new Error("No fields to update");
   }
 
-  await client.updateIssue(issueId, payload as any);
+  await client.updateIssue(issueId, payload);
 }
 
 /**
@@ -194,7 +195,7 @@ export async function createIssue(opts: {
   }
 
   // Build create payload
-  const payload: Record<string, unknown> = {
+  const payload: LinearDocument.IssueCreateInput = {
     teamId: team.id,
     title: opts.title,
     labelIds,
@@ -237,7 +238,7 @@ export async function createIssue(opts: {
     }
   }
 
-  const result = await client.createIssue(payload as any);
+  const result = await client.createIssue(payload);
   const issue = await result.issue;
 
   return {
