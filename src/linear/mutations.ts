@@ -170,8 +170,8 @@ export async function createIssue(opts: {
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${opts.teamKey}`);
 
-  // Resolve label IDs (paginated, includes workspace labels)
-  const labelIds = await resolveLabels(opts.teamKey, opts.labelNames, "add-ticket");
+  // Resolve label IDs (paginated, includes workspace labels, strict: throw on missing)
+  const labelIds = await resolveLabels(opts.teamKey, opts.labelNames, "add-ticket", { strict: true });
 
   // Build create payload
   const payload: LinearDocument.IssueCreateInput = {
@@ -198,7 +198,7 @@ export async function createIssue(opts: {
     if (project) {
       payload.projectId = project.id;
     } else {
-      log("WARN", "add-ticket", `Project "${opts.projectName}" not found. Skipping.`);
+      throw new Error(`Project "${opts.projectName}" not found in Linear`);
     }
   }
 
