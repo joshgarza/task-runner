@@ -7,6 +7,7 @@ import { runIssue } from "./runner/run-issue.ts";
 import { drain } from "./runner/drain.ts";
 import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
+import { addTicket } from "./runner/add-ticket.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -99,6 +100,37 @@ program
       await standup({ days: opts.days, project: opts.project });
     } catch (err: any) {
       log("ERROR", "standup", `Standup failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("add-ticket <title>")
+  .description("Create a new Linear issue")
+  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("--description <text>", "Issue description")
+  .option("--labels <labels...>", 'Comma-separated labels (default: "needs review")')
+  .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => {
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 0 || n > 4) throw new Error(`Invalid priority: ${v}. Must be 0-4.`);
+    return n;
+  })
+  .option("--project <name>", "Linear project name")
+  .option("--state <name>", "Workflow state name")
+  .action(async (title: string, opts) => {
+    try {
+      const result = await addTicket(title, {
+        team: opts.team,
+        description: opts.description,
+        labels: opts.labels,
+        priority: opts.priority,
+        project: opts.project,
+        state: opts.state,
+      });
+      console.log(`\nCreated: ${result.identifier}`);
+      if (result.url) console.log(`URL: ${result.url}`);
+    } catch (err: any) {
+      log("ERROR", "add-ticket", `Failed to create issue: ${err.message}`);
       process.exit(1);
     }
   });
