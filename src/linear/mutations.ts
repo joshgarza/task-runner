@@ -1,6 +1,7 @@
 // Transition state, add comment, create/add issues in Linear
 
 import { getLinearClient } from "./client.ts";
+import { resolveLabels } from "./labels.ts";
 import { log } from "../logger.ts";
 
 /**
@@ -54,11 +55,8 @@ export async function createChildIssue(
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${teamKey}`);
 
-  // Find label IDs
-  const teamLabels = await team.labels();
-  const labelIds = labelNames
-    .map((name) => teamLabels.nodes.find((l) => l.name === name)?.id)
-    .filter((id): id is string => !!id);
+  // Resolve label IDs (paginated, includes workspace labels)
+  const labelIds = await resolveLabels(teamKey, labelNames, "create-child-issue");
 
   const result = await client.createIssue({
     teamId: team.id,
@@ -108,19 +106,9 @@ export async function updateIssue(
     payload.priority = opts.priority;
   }
 
-  // Resolve labels by name
+  // Resolve labels by name (paginated, includes workspace labels)
   if (opts.labelNames !== undefined) {
-    const teamLabels = await team.labels();
-    const labelIds: string[] = [];
-    for (const name of opts.labelNames) {
-      const label = teamLabels.nodes.find((l) => l.name === name);
-      if (label) {
-        labelIds.push(label.id);
-      } else {
-        log("WARN", "edit-ticket", `Label "${name}" not found in team ${teamKey}. Skipping.`);
-      }
-    }
-    payload.labelIds = labelIds;
+    payload.labelIds = await resolveLabels(teamKey, opts.labelNames, "edit-ticket");
   }
 
   // Resolve state by name
@@ -181,17 +169,8 @@ export async function createIssue(opts: {
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${opts.teamKey}`);
 
-  // Resolve label IDs
-  const teamLabels = await team.labels();
-  const labelIds: string[] = [];
-  for (const name of opts.labelNames) {
-    const label = teamLabels.nodes.find((l) => l.name === name);
-    if (label) {
-      labelIds.push(label.id);
-    } else {
-      log("WARN", "add-ticket", `Label "${name}" not found in team ${opts.teamKey}. Skipping.`);
-    }
-  }
+  // Resolve label IDs (paginated, includes workspace labels)
+  const labelIds = await resolveLabels(opts.teamKey, opts.labelNames, "add-ticket");
 
   // Build create payload
   const payload: Record<string, unknown> = {
