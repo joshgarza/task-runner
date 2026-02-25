@@ -224,6 +224,73 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
 }
 
 /**
+ * Fetch issues with flexible filtering by team, states, project, and labels.
+ * Skips comment fetching unless includeComments is true (for performance).
+ */
+export async function fetchFilteredIssues(opts: {
+  teamKey: string;
+  stateNames?: string[];
+  projectName?: string;
+  labelNames?: string[];
+  includeComments?: boolean;
+}): Promise<LinearIssue[]> {
+  const client = getLinearClient();
+
+  const filter: any = {
+    team: { key: { eq: opts.teamKey } },
+  };
+
+  if (opts.stateNames && opts.stateNames.length > 0) {
+    filter.state = { name: { in: opts.stateNames } };
+  }
+
+  if (opts.projectName) {
+    filter.project = { name: { eq: opts.projectName } };
+  }
+
+  if (opts.labelNames && opts.labelNames.length > 0) {
+    filter.labels = { name: { in: opts.labelNames } };
+  }
+
+  const issues = await client.issues({
+    filter,
+    first: 100,
+  });
+
+  const results: LinearIssue[] = [];
+  for (const issue of issues.nodes) {
+    if (opts.includeComments) {
+      results.push(await toLinearIssue(issue));
+    } else {
+      const team = await issue.team;
+      if (!team) continue;
+      const state = await issue.state;
+      const project = await issue.project;
+      const labelsConn = await issue.labels({ first: 250 });
+      const allLabels = await collectAllNodes(labelsConn);
+
+      results.push({
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        description: issue.description ?? null,
+        teamKey: team.key,
+        teamName: team.name,
+        stateName: state?.name ?? "Unknown",
+        stateId: state?.id ?? "",
+        projectName: project?.name ?? null,
+        labels: allLabels.map((l: any) => l.name),
+        comments: [],
+        url: issue.url,
+        branchName: issue.branchName,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Fetch recent activity for standup digest
  */
 export async function fetchRecentActivity(
