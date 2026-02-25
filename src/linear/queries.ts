@@ -129,6 +129,97 @@ export async function fetchStaleIssues(
 }
 
 /**
+ * Fetch all issues for a team in specific states, optionally filtered by project
+ */
+export async function fetchIssuesByTeamAndStates(
+  teamKey: string,
+  stateNames: string[],
+  projectName?: string
+): Promise<LinearIssue[]> {
+  const client = getLinearClient();
+
+  const filter: any = {
+    team: { key: { eq: teamKey } },
+    state: { name: { in: stateNames } },
+  };
+
+  if (projectName) {
+    filter.project = { name: { eq: projectName } };
+  }
+
+  const issues = await client.issues({
+    filter,
+    first: 100,
+  });
+
+  const results: LinearIssue[] = [];
+  for (const issue of issues.nodes) {
+    results.push(await toLinearIssue(issue));
+  }
+
+  return results;
+}
+
+/**
+ * Fetch blocking relations for an issue.
+ * Returns issues that block this one, with their completion status.
+ */
+export async function fetchBlockingRelations(issueId: string): Promise<{
+  identifier: string;
+  title: string;
+  stateName: string;
+  done: boolean;
+}[]> {
+  const client = getLinearClient();
+  const issue = await client.issue(issueId);
+
+  const blockers: { identifier: string; title: string; stateName: string; done: boolean }[] = [];
+  const seen = new Set<string>();
+
+  // Direct relations: type "blocked_by" means relatedIssue blocks this issue
+  const relations = await issue.relations();
+  for (const rel of relations.nodes) {
+    if (rel.type === "blocked_by") {
+      const related = await rel.relatedIssue;
+      if (related && !seen.has(related.id)) {
+        seen.add(related.id);
+        const state = await related.state;
+        blockers.push({
+          identifier: related.identifier,
+          title: related.title,
+          stateName: state?.name ?? "Unknown",
+          done: state?.type === "completed" || state?.type === "canceled",
+        });
+      }
+    }
+  }
+
+  // Inverse relations: type "blocks" means the source issue blocks this one
+  try {
+    const inverseRelations = await issue.inverseRelations();
+    for (const rel of inverseRelations.nodes) {
+      if (rel.type === "blocks") {
+        const source = await rel.issue;
+        if (source && !seen.has(source.id)) {
+          seen.add(source.id);
+          const state = await source.state;
+          blockers.push({
+            identifier: source.identifier,
+            title: source.title,
+            stateName: state?.name ?? "Unknown",
+            done: state?.type === "completed" || state?.type === "canceled",
+          });
+        }
+      }
+    }
+  } catch {
+    // inverseRelations may not be available in all SDK versions
+  }
+
+  return blockers;
+}
+
+/**
  * Fetch recent activity for standup digest
  */
 export async function fetchRecentActivity(

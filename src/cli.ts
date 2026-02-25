@@ -9,6 +9,7 @@ import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
+import { organizeTickets } from "./runner/organize-tickets.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -165,6 +166,44 @@ program
       if (result.url) console.log(`URL: ${result.url}`);
     } catch (err: any) {
       log("ERROR", "edit-ticket", `Failed to update issue: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("organize-tickets")
+  .description("Triage Linear tickets and label unblocked ones as agent-ready")
+  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("--project <name>", "Linear project name to filter by")
+  .option("--states <states...>", "Workflow states to include (default: Todo, Backlog)")
+  .option("--add-label <labels...>", "Labels to add to unblocked tickets (default: agent-ready)")
+  .option("--remove-label <labels...>", "Labels to remove from unblocked tickets")
+  .option("--dry-run", "Preview changes without applying")
+  .action(async (opts) => {
+    try {
+      const results = await organizeTickets({
+        team: opts.team,
+        project: opts.project,
+        states: opts.states,
+        addLabels: opts.addLabel,
+        removeLabels: opts.removeLabel,
+        dryRun: opts.dryRun,
+      });
+
+      // Print summary table
+      console.log("\n--- Results ---");
+      for (const r of results) {
+        const icon = r.action === "labeled" ? "[+]" : r.action === "blocked" ? "[x]" : "[-]";
+        console.log(`${icon} ${r.identifier}: ${r.title}`);
+        console.log(`    ${r.reason}`);
+      }
+
+      const labeled = results.filter((r) => r.action === "labeled").length;
+      const blocked = results.filter((r) => r.action === "blocked").length;
+      const skipped = results.filter((r) => r.action === "skipped").length;
+      console.log(`\nTotal: ${labeled} labeled, ${blocked} blocked, ${skipped} skipped`);
+    } catch (err: any) {
+      log("ERROR", "organize", `Failed: ${err.message}`);
       process.exit(1);
     }
   });
