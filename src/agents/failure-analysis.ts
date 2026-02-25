@@ -42,7 +42,7 @@ const PATTERNS: PatternRule[] = [
     extractCapability: () => null,
   },
   {
-    pattern: /timed out|SIGTERM|ETIMEDOUT|timeout/gi,
+    pattern: /\btimed out\b|\bSIGTERM\b|\bETIMEDOUT\b/gi,
     category: "timeout",
     extractCapability: () => null,
   },

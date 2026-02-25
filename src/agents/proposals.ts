@@ -21,6 +21,10 @@ function ensureProposalsDir(): void {
 }
 
 function proposalPath(id: string): string {
+  // Validate ID format to prevent path traversal (e.g., "../../etc/passwd")
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw new Error(`Invalid proposal ID format: ${id}`);
+  }
   return resolve(PROPOSALS_DIR, `${id}.json`);
 }
 
@@ -38,6 +42,16 @@ export async function createProposal(opts: {
   ensureProposalsDir();
 
   const { issue, baseAgentType, failureAnalysis, config } = opts;
+
+  // Idempotency guard: check if a pending proposal already exists for this
+  // issue + base agent type combo (prevents duplicates on re-run via drain)
+  const existing = listProposals("pending").find(
+    (p) => p.issueIdentifier === issue.identifier && p.baseAgentType === baseAgentType
+  );
+  if (existing) {
+    log("INFO", "proposals", `Pending proposal ${existing.id} already exists for ${issue.identifier}, skipping duplicate`);
+    return existing;
+  }
 
   // Resolve the base agent's current tools
   const registry = loadRegistry();

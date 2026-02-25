@@ -7,14 +7,18 @@ import type { AgentTypeDefinition, ResolvedAgentType } from "../types.ts";
 
 const REGISTRY_PATH = resolve(import.meta.dirname, "agent-registry.json");
 
-// Patterns that are never allowed — blanket bash, network, destructive
-const FORBIDDEN_PATTERNS = [
-  "Bash(*)",
-  "Bash(sudo:*)",
-  "Bash(git push:*)",
-  "Bash(rm -rf:*)",
-  "Bash(curl:*)",
-  "Bash(wget:*)",
+// Patterns that are never allowed — blanket bash, network, destructive.
+// Each entry is a prefix/substring to match against tool strings.
+// "Bash(*)" blocks unrestricted bash access.
+// "Bash(sudo" blocks any sudo variant (sudo, sudo su, etc.).
+// "Bash(rm -rf" blocks any rm -rf variant (with or without path args).
+const FORBIDDEN_PREFIXES = [
+  "Bash(*)",       // Unrestricted bash — matches exactly
+  "Bash(sudo",     // Any sudo command
+  "Bash(git push", // Any git push variant
+  "Bash(rm -rf",   // Any rm -rf variant
+  "Bash(curl",     // Any curl command
+  "Bash(wget",     // Any wget command
 ];
 
 export type AgentRegistry = Record<string, AgentTypeDefinition>;
@@ -35,11 +39,19 @@ export function loadRegistry(): AgentRegistry {
  */
 function validateRegistry(registry: AgentRegistry): void {
   for (const [name, def] of Object.entries(registry)) {
-    for (const tool of def.tools) {
-      if (FORBIDDEN_PATTERNS.includes(tool)) {
+    // Validate raw tools AND resolved (inherited) tools
+    const toolsToCheck = def.extends && def.extends in registry
+      ? [...new Set([...registry[def.extends].tools, ...def.tools])]
+      : def.tools;
+
+    for (const tool of toolsToCheck) {
+      const matched = FORBIDDEN_PREFIXES.find(
+        (prefix) => tool === prefix || tool.startsWith(prefix)
+      );
+      if (matched) {
         throw new Error(
-          `Agent type "${name}" has forbidden tool: ${tool}. ` +
-          `Forbidden patterns: ${FORBIDDEN_PATTERNS.join(", ")}`
+          `Agent type "${name}" has forbidden tool: ${tool} (matches forbidden prefix "${matched}"). ` +
+          `Forbidden prefixes: ${FORBIDDEN_PREFIXES.join(", ")}`
         );
       }
     }
