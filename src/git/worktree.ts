@@ -7,6 +7,24 @@ import { log } from "../logger.ts";
 
 const WORKTREE_DIR = ".task-runner-worktrees";
 
+/**
+ * Resolve the git-capable directory from a repoPath.
+ * - Traditional repo: repoPath/.git exists → use repoPath
+ * - Hub layout: repoPath/main/.git exists → use repoPath/main
+ */
+function resolveGitDir(repoPath: string): string {
+  if (existsSync(resolve(repoPath, ".git"))) {
+    return repoPath;
+  }
+  const hubMain = resolve(repoPath, "main");
+  if (existsSync(resolve(hubMain, ".git"))) {
+    return hubMain;
+  }
+  throw new Error(
+    `No git repository found at ${repoPath} (checked .git and main/.git)`
+  );
+}
+
 export function getWorktreePath(repoPath: string, issueId: string): string {
   return resolve(repoPath, WORKTREE_DIR, issueId);
 }
@@ -26,6 +44,7 @@ export function createWorktree(
 ): string {
   const worktreePath = getWorktreePath(repoPath, issueId);
   const branch = getBranchName(issueId);
+  const gitDir = resolveGitDir(repoPath);
 
   if (existsSync(worktreePath)) {
     log("WARN", issueId, `Worktree already exists at ${worktreePath}, removing first`);
@@ -34,7 +53,7 @@ export function createWorktree(
 
   // Fetch latest from remote
   execSync("git fetch origin", {
-    cwd: repoPath,
+    cwd: gitDir,
     timeout: 30_000,
     encoding: "utf-8",
   });
@@ -43,7 +62,7 @@ export function createWorktree(
   execSync(
     `git worktree add -b "${branch}" "${worktreePath}" "origin/${defaultBranch}"`,
     {
-      cwd: repoPath,
+      cwd: gitDir,
       timeout: 30_000,
       encoding: "utf-8",
     }
@@ -60,10 +79,11 @@ export function createWorktree(
 export function removeWorktree(repoPath: string, issueId: string, deleteRemote = false): void {
   const worktreePath = getWorktreePath(repoPath, issueId);
   const branch = getBranchName(issueId);
+  const gitDir = resolveGitDir(repoPath);
 
   try {
     execSync(`git worktree remove "${worktreePath}" --force`, {
-      cwd: repoPath,
+      cwd: gitDir,
       timeout: 15_000,
       encoding: "utf-8",
     });
@@ -73,7 +93,7 @@ export function removeWorktree(repoPath: string, issueId: string, deleteRemote =
 
   try {
     execSync(`git branch -D "${branch}"`, {
-      cwd: repoPath,
+      cwd: gitDir,
       timeout: 10_000,
       encoding: "utf-8",
     });
@@ -84,7 +104,7 @@ export function removeWorktree(repoPath: string, issueId: string, deleteRemote =
   if (deleteRemote) {
     try {
       execSync(`git push origin --delete "${branch}"`, {
-        cwd: repoPath,
+        cwd: gitDir,
         timeout: 15_000,
         encoding: "utf-8",
       });
