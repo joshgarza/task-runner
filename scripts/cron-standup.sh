@@ -28,7 +28,9 @@ cd "$TASK_RUNNER_DIR"
 
 {
   echo "=== standup started at $(date -Iseconds) ==="
-  node --experimental-strip-types src/cli.ts standup 2>&1
-  echo "=== standup finished at $(date -Iseconds) ==="
+  rc=0
+  node --experimental-strip-types src/cli.ts standup 2>&1 || rc=$?
+  echo "=== standup finished at $(date -Iseconds) exit=$rc ==="
   echo ""
 } >> "$LOG_FILE" 2>&1
+exit $rc

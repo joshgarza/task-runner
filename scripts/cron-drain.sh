@@ -28,7 +28,9 @@ cd "$TASK_RUNNER_DIR"
 
 {
   echo "=== drain started at $(date -Iseconds) ==="
-  node --experimental-strip-types src/cli.ts drain 2>&1
-  echo "=== drain finished at $(date -Iseconds) ==="
+  rc=0
+  node --experimental-strip-types src/cli.ts drain 2>&1 || rc=$?
+  echo "=== drain finished at $(date -Iseconds) exit=$rc ==="
   echo ""
 } >> "$LOG_FILE" 2>&1
+exit $rc
