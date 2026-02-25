@@ -63,6 +63,18 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
           break;
         }
 
+        if (options.dryRun) {
+          const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
+          log("INFO", issue.identifier, `[dry-run] ${issue.title} | project: ${issue.projectName ?? "none"}${labels} (${issue.url})`);
+          results.push({
+            issueId: issue.identifier,
+            success: true,
+            durationMs: 0,
+            attempts: 0,
+          });
+          continue;
+        }
+
         log("INFO", null, `Processing ${issue.identifier}: ${issue.title}`);
 
         try {
@@ -90,7 +102,8 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     // Summary
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
-    log("INFO", null, `Drain complete — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
+    const suffix = options.dryRun ? " (dry run)" : "";
+    log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
   } finally {
     releaseLock();
   }

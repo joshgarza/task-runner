@@ -58,12 +58,14 @@ program
   .option("--label <label>", "Label to filter by")
   .option("--project <project>", "Linear project name to filter by")
   .option("--limit <n>", "Maximum issues to process", (v: string) => parseInt(v, 10))
+  .option("--dry-run", "List agent-ready issues without processing them")
   .action(async (opts) => {
     try {
       const results = await drain({
         label: opts.label,
         project: opts.project,
         limit: opts.limit,
+        dryRun: opts.dryRun,
       });
 
       const succeeded = results.filter((r) => r.success).length;

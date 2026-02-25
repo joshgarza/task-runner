@@ -97,6 +97,7 @@ export interface DrainOptions {
   label?: string;
   project?: string;
   limit?: number;
+  dryRun?: boolean;
 }
 
 export interface RunResult {
