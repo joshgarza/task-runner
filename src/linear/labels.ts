@@ -53,12 +53,13 @@ export async function resolveTeamLabels(teamKey: string): Promise<Map<string, st
 
 /**
  * Resolve label names to IDs for a given team.
- * Logs a warning for any names that cannot be resolved.
+ * When strict is true, throws on missing labels instead of skipping.
  */
 export async function resolveLabels(
   teamKey: string,
   labelNames: string[],
-  context: string = "linear"
+  context: string = "linear",
+  opts: { strict?: boolean } = {}
 ): Promise<string[]> {
   const labelMap = await resolveTeamLabels(teamKey);
   const labelIds: string[] = [];
@@ -66,6 +67,9 @@ export async function resolveLabels(
     const id = labelMap.get(name);
     if (id) {
       labelIds.push(id);
+    } else if (opts.strict) {
+      const available = [...labelMap.keys()].join(", ");
+      throw new Error(`Label "${name}" not found in team ${teamKey}. Available: ${available}`);
     } else {
       log("WARN", context, `Label "${name}" not found in team ${teamKey}. Skipping.`);
     }
