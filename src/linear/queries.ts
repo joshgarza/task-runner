@@ -1,6 +1,7 @@
 // Fetch issues, states, comments, labels from Linear
 
 import { getLinearClient } from "./client.ts";
+import { collectAllNodes } from "./labels.ts";
 import type { LinearIssue } from "../types.ts";
 
 /**
@@ -10,7 +11,8 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const state = await issue.state;
   const team = await issue.team;
   const project = await issue.project;
-  const labelsConn = await issue.labels();
+  const labelsConn = await issue.labels({ first: 250 });
+  const allLabels = await collectAllNodes(labelsConn);
   const commentsConn = await issue.comments();
 
   if (!team) {
@@ -27,7 +29,7 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
     stateName: state?.name ?? "Unknown",
     stateId: state?.id ?? "",
     projectName: project?.name ?? null,
-    labels: labelsConn.nodes.map((l: any) => l.name),
+    labels: allLabels.map((l: any) => l.name),
     comments: commentsConn.nodes.map((c: any) => c.body),
     url: issue.url,
     branchName: issue.branchName,
@@ -247,7 +249,8 @@ export async function fetchRecentActivity(
 
     const state = await issue.state;
     const project = await issue.project;
-    const labelsConn = await issue.labels();
+    const labelsConn = await issue.labels({ first: 250 });
+    const allLabels = await collectAllNodes(labelsConn);
 
     results.push({
       id: issue.id,
@@ -259,7 +262,7 @@ export async function fetchRecentActivity(
       stateName: state?.name ?? "Unknown",
       stateId: state?.id ?? "",
       projectName: project?.name ?? null,
-      labels: labelsConn.nodes.map((l: any) => l.name),
+      labels: allLabels.map((l: any) => l.name),
       comments: [],
       url: issue.url,
       branchName: issue.branchName,
