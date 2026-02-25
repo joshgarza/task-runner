@@ -97,6 +97,38 @@ export async function fetchAgentReadyIssues(
 }
 
 /**
+ * Fetch issues with a given label that are stuck in a specific state (e.g. "In Progress")
+ */
+export async function fetchStaleIssues(
+  labelName: string,
+  stateName: string,
+  projectName?: string
+): Promise<LinearIssue[]> {
+  const client = getLinearClient();
+
+  const filter: any = {
+    labels: { name: { eq: labelName } },
+    state: { name: { eq: stateName } },
+  };
+
+  if (projectName) {
+    filter.project = { name: { eq: projectName } };
+  }
+
+  const issues = await client.issues({
+    filter,
+    first: 50,
+  });
+
+  const results: LinearIssue[] = [];
+  for (const issue of issues.nodes) {
+    results.push(await toLinearIssue(issue));
+  }
+
+  return results;
+}
+
+/**
  * Fetch recent activity for standup digest
  */
 export async function fetchRecentActivity(

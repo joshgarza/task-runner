@@ -27,6 +27,8 @@ export async function runIssue(
   const maxBudgetUsd = options.maxBudgetUsd ?? config.defaults.maxBudgetUsd;
   const maxAttempts = options.maxAttempts ?? config.defaults.maxAttempts;
 
+  let transitionedToInProgress = false;
+
   log("INFO", identifier, `Starting pipeline (model: ${model}, attempts: ${maxAttempts})`);
 
   // 1. Fetch issue from Linear
@@ -75,6 +77,7 @@ export async function runIssue(
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
     await addComment(issue.id, `🤖 Agent starting work (model: ${model}, max-turns: ${maxTurns})`);
+    transitionedToInProgress = true;
     log("INFO", identifier, `Transitioned to "${config.linear.inProgressState}"`);
   } catch (err: any) {
     log("WARN", identifier, `Failed to transition issue: ${err.message}`);
@@ -85,12 +88,14 @@ export async function runIssue(
   try {
     worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch);
   } catch (err: any) {
+    await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
   }
 
   const branch = getBranchName(identifier);
   let attempts = 0;
   let lastError = "";
+  let pipelineSucceeded = false;
 
   try {
     // 6. Spawn worker agent (with retry loop)
@@ -206,7 +211,9 @@ export async function runIssue(
       if (verdict.approved) {
         log("OK", identifier, "Review: APPROVED");
         try {
-          addPRLabel(prUrl, config.github.reviewApprovedLabel);
+          if (config.github.reviewApprovedLabel) {
+            addPRLabel(prUrl, config.github.reviewApprovedLabel);
+          }
           await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
           await addComment(issue.id, `🤖 Review passed: ${verdict.summary}`);
         } catch (err: any) {
@@ -243,6 +250,8 @@ export async function runIssue(
       }
     }
 
+    pipelineSucceeded = true;
+
     return {
       issueId: identifier,
       success: true,
@@ -252,11 +261,16 @@ export async function runIssue(
       attempts,
     };
   } finally {
-    // 14. Clean up worktree
+    // 14. Clean up worktree (delete remote branch only on failure)
     try {
-      removeWorktree(projectConfig.repoPath, identifier);
+      removeWorktree(projectConfig.repoPath, identifier, !pipelineSucceeded);
     } catch (err: any) {
       log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
+    }
+
+    // 15. Roll back to Todo if pipeline failed after transitioning to In Progress
+    if (!pipelineSucceeded && transitionedToInProgress) {
+      await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed");
     }
   }
 }
@@ -326,6 +340,23 @@ function parseReviewVerdict(output: string, issueId: string): ReviewVerdict {
       lintPass: false,
       tscPass: false,
     };
+  }
+}
+
+async function rollbackInProgress(
+  transitioned: boolean,
+  issue: any,
+  config: any,
+  identifier: string,
+  error: string
+): Promise<void> {
+  if (!transitioned || !issue) return;
+  try {
+    await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
+    await addComment(issue.id, `🤖 Agent failed, moving back to Todo.\n\nError: ${error.slice(0, 500)}`);
+    log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
+  } catch (err: any) {
+    log("WARN", identifier, `Failed to roll back issue state: ${err.message}`);
   }
 }
 

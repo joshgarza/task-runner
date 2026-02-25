@@ -30,7 +30,7 @@ export interface DefaultsConfig {
 
 export interface GithubConfig {
   prLabels: string[];
-  reviewApprovedLabel: string;
+  reviewApprovedLabel?: string;
 }
 
 export interface TaskRunnerConfig {

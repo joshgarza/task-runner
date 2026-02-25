@@ -80,8 +80,8 @@ export function loadConfig(): TaskRunnerConfig {
     },
     defaults: {
       model: raw.defaults?.model ?? "opus",
-      maxTurns: raw.defaults?.maxTurns ?? 30,
-      maxBudgetUsd: raw.defaults?.maxBudgetUsd ?? 5.0,
+      maxTurns: raw.defaults?.maxTurns ?? 50,
+      maxBudgetUsd: raw.defaults?.maxBudgetUsd ?? 10.0,
       reviewModel: raw.defaults?.reviewModel ?? "opus",
       reviewMaxTurns: raw.defaults?.reviewMaxTurns ?? 15,
       reviewMaxBudgetUsd: raw.defaults?.reviewMaxBudgetUsd ?? 2.0,
@@ -90,8 +90,7 @@ export function loadConfig(): TaskRunnerConfig {
     },
     github: {
       prLabels: raw.github?.prLabels ?? ["agent-generated"],
-      reviewApprovedLabel:
-        raw.github?.reviewApprovedLabel ?? "ready-for-human-review",
+      reviewApprovedLabel: raw.github?.reviewApprovedLabel ?? undefined,
     },
   };
 

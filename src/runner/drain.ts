@@ -3,7 +3,7 @@
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { acquireLock, releaseLock } from "../lock.ts";
-import { fetchAgentReadyIssues } from "../linear/queries.ts";
+import { fetchAgentReadyIssues, fetchStaleIssues } from "../linear/queries.ts";
 import { runIssue } from "./run-issue.ts";
 import type { DrainOptions, RunResult } from "../types.ts";
 
@@ -26,6 +26,18 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     const projectNames = options.project
       ? [options.project]
       : Object.keys(config.projects);
+
+    // Check for stale in-progress issues (agent-labeled but stuck in In Progress)
+    for (const projectName of projectNames) {
+      try {
+        const stale = await fetchStaleIssues(label, config.linear.inProgressState, projectName);
+        for (const issue of stale) {
+          log("WARN", issue.identifier, `Stale: "${issue.title}" is In Progress with "${label}" label — may need manual attention (${issue.url})`);
+        }
+      } catch {
+        // Non-fatal — don't block drain over stale check
+      }
+    }
 
     for (const projectName of projectNames) {
       log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);

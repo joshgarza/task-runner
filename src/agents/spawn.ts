@@ -50,12 +50,14 @@ export function spawnAgent(opts: SpawnOptions): AgentResult {
   let exitCode: number | null = null;
 
   try {
+    const { CLAUDECODE, ...cleanEnv } = process.env;
     const result = spawnSync("claude", claudeArgs, {
       cwd: opts.cwd,
       input: opts.prompt,
       timeout: opts.timeoutMs,
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024, // 10MB
+      env: cleanEnv,
     });
 
     if (result.error) {
