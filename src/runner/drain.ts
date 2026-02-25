@@ -40,13 +40,15 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     }
 
     // Collect all issues across projects, respecting the limit
+    // Query both Todo and Backlog — matches the valid states in run-issue.ts
+    const fetchStates = [config.linear.todoState, "Backlog"];
     const allIssues: LinearIssue[] = [];
     for (const projectName of projectNames) {
       log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
 
       let issues;
       try {
-        issues = await fetchAgentReadyIssues(label, config.linear.todoState, projectName);
+        issues = await fetchAgentReadyIssues(label, fetchStates, projectName);
       } catch (err: any) {
         log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
         continue;

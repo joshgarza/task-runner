@@ -70,15 +70,19 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
  */
 export async function fetchAgentReadyIssues(
   labelName: string,
-  stateName: string,
+  stateNames: string | string[],
   projectName?: string
 ): Promise<LinearIssue[]> {
   const client = getLinearClient();
 
-  // Build filter
+  // Build filter — support single state or multiple states
+  const stateFilter = Array.isArray(stateNames)
+    ? { name: { in: stateNames } }
+    : { name: { eq: stateNames } };
+
   const filter: any = {
     labels: { name: { eq: labelName } },
-    state: { name: { eq: stateName } },
+    state: stateFilter,
   };
 
   if (projectName) {
