@@ -5,6 +5,7 @@ import { log } from "../logger.ts";
 import { acquireLock, releaseLock } from "../lock.ts";
 import { fetchAgentReadyIssues, fetchStaleIssues } from "../linear/queries.ts";
 import { runIssue } from "./run-issue.ts";
+import { runWithConcurrency } from "../concurrency.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
 export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
@@ -87,48 +88,13 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
     // Process issues with concurrency pool
     log("INFO", null, `Processing ${allIssues.length} issue(s) with concurrency ${concurrency}`);
-    const results = await runWithConcurrency(allIssues, concurrency);
+    const results = await runWithConcurrency(allIssues, concurrency, processIssue);
 
     logSummary(results, false);
     return results;
   } finally {
     releaseLock();
   }
-}
-
-async function runWithConcurrency(
-  issues: LinearIssue[],
-  concurrency: number
-): Promise<RunResult[]> {
-  const results: RunResult[] = new Array(issues.length);
-
-  if (concurrency <= 1) {
-    // Sequential — preserves original behavior
-    for (let i = 0; i < issues.length; i++) {
-      results[i] = await processIssue(issues[i]);
-    }
-    return results;
-  }
-
-  // Parallel — process up to `concurrency` issues at a time.
-  // Uses indexed assignment so results maintain input order regardless
-  // of which worker resolves first.
-  let index = 0;
-
-  async function worker(): Promise<void> {
-    while (index < issues.length) {
-      const i = index++;
-      results[i] = await processIssue(issues[i]);
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, issues.length) },
-    () => worker()
-  );
-  await Promise.allSettled(workers);
-
-  return results;
 }
 
 async function processIssue(issue: LinearIssue): Promise<RunResult> {

@@ -1,45 +1,9 @@
-// Tests for drain concurrency pool behavior
+// Tests for the shared runWithConcurrency worker pool
 // Run: node --experimental-strip-types --test src/runner/drain.test.ts
 
-import { describe, it, mock, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-
-// We can't easily mock ES module imports, so we test the pool logic directly
-// by extracting the same pattern used in drain.ts
-
-interface MockIssue {
-  id: string;
-  startedAt?: number;
-  finishedAt?: number;
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<void>
-): Promise<void> {
-  if (concurrency <= 1) {
-    for (const item of items) {
-      await fn(item);
-    }
-    return;
-  }
-
-  let index = 0;
-
-  async function worker(): Promise<void> {
-    while (index < items.length) {
-      const item = items[index++];
-      await fn(item);
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => worker()
-  );
-  await Promise.allSettled(workers);
-}
+import { runWithConcurrency } from "../concurrency.ts";
 
 describe("runWithConcurrency", () => {
   it("processes all items with concurrency=1 (sequential)", async () => {
@@ -48,22 +12,33 @@ describe("runWithConcurrency", () => {
 
     await runWithConcurrency(items, 1, async (item) => {
       processed.push(item);
+      return item;
     });
 
     assert.deepEqual(processed, ["a", "b", "c"]);
   });
 
-  it("processes all items with concurrency > item count", async () => {
-    const processed: string[] = [];
-    const items = ["a", "b"];
+  it("returns results in input order regardless of concurrency", async () => {
+    const items = [3, 1, 2]; // delays in ms * 10
 
-    await runWithConcurrency(items, 10, async (item) => {
-      processed.push(item);
+    const results = await runWithConcurrency(items, 3, async (delay) => {
+      await new Promise((r) => setTimeout(r, delay * 10));
+      return `done-${delay}`;
     });
 
-    assert.equal(processed.length, 2);
-    assert.ok(processed.includes("a"));
-    assert.ok(processed.includes("b"));
+    // Results must match input order, not completion order
+    assert.deepEqual(results, ["done-3", "done-1", "done-2"]);
+  });
+
+  it("processes all items with concurrency > item count", async () => {
+    const items = ["a", "b"];
+
+    const results = await runWithConcurrency(items, 10, async (item) => {
+      return item.toUpperCase();
+    });
+
+    assert.equal(results.length, 2);
+    assert.deepEqual(results, ["A", "B"]);
   });
 
   it("runs tasks in parallel when concurrency > 1", async () => {
@@ -75,6 +50,7 @@ describe("runWithConcurrency", () => {
       timeline.push({ id: item, event: "start", time: start });
       await new Promise((r) => setTimeout(r, 50));
       timeline.push({ id: item, event: "end", time: Date.now() });
+      return item;
     });
 
     // All 4 items should be processed
@@ -84,7 +60,6 @@ describe("runWithConcurrency", () => {
     assert.equal(ends.length, 4);
 
     // With concurrency=2, at least 2 items should start before the first one ends
-    // Sort by time to check overlap
     const sortedStarts = starts.sort((a, b) => a.time - b.time);
     const firstEnd = ends.sort((a, b) => a.time - b.time)[0];
 
@@ -97,22 +72,28 @@ describe("runWithConcurrency", () => {
     );
   });
 
-  it("handles errors in individual tasks without stopping others", async () => {
+  it("a throwing fn kills only that worker — other workers continue", async () => {
     const processed: string[] = [];
     const items = ["a", "b", "c"];
 
-    await runWithConcurrency(items, 2, async (item) => {
+    // Note: in production, drain's processIssue catches internally and never
+    // throws. This test documents the raw pool behavior: a throwing fn stops
+    // only the worker that hit the error, not the entire pool.
+    const results = await runWithConcurrency(items, 2, async (item) => {
       if (item === "b") throw new Error("fail");
       processed.push(item);
+      return item;
     });
 
     // "a" and "c" should still be processed even though "b" threw.
-    // The worker that hit "b" will stop, but the other worker continues.
-    // With concurrency=2: worker1 gets "a", worker2 gets "b" (throws, stops),
-    // worker1 continues with "c"
     assert.ok(processed.includes("a"), "a should be processed");
     assert.ok(processed.includes("c"), "c should be processed");
     assert.ok(!processed.includes("b"), "b should not be in processed");
+
+    // The result slot for "b" is undefined because the worker died before assigning
+    assert.equal(results[0], "a");
+    assert.equal(results[1], undefined);
+    assert.equal(results[2], "c");
   });
 
   it("respects concurrency limit", async () => {
@@ -125,6 +106,7 @@ describe("runWithConcurrency", () => {
       maxRunning = Math.max(maxRunning, running);
       await new Promise((r) => setTimeout(r, 30));
       running--;
+      return null;
     });
 
     assert.ok(
@@ -138,12 +120,10 @@ describe("runWithConcurrency", () => {
   });
 
   it("handles empty item list", async () => {
-    const processed: string[] = [];
-
-    await runWithConcurrency([], 3, async (item: string) => {
-      processed.push(item);
+    const results = await runWithConcurrency([], 3, async (item: string) => {
+      return item;
     });
 
-    assert.equal(processed.length, 0);
+    assert.equal(results.length, 0);
   });
 });
