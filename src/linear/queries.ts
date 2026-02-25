@@ -195,7 +195,7 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
   }
 
   // Inverse relations: type "blocks" means the source issue blocks this one
-  try {
+  if (typeof issue.inverseRelations === "function") {
     const inverseRelations = await issue.inverseRelations();
     for (const rel of inverseRelations.nodes) {
       if (rel.type === "blocks") {
@@ -212,8 +212,6 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
         }
       }
     }
-  } catch {
-    // inverseRelations may not be available in all SDK versions
   }
 
   return blockers;

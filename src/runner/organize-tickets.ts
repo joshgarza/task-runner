@@ -8,7 +8,22 @@ import { getLinearClient } from "../linear/client.ts";
 import type { OrganizeTicketsOptions, OrganizeTicketResult } from "../types.ts";
 
 /**
- * Resolve label names to IDs for a given team
+ * Collect all nodes from a paginated Linear connection
+ */
+async function collectAllNodes<T>(connection: { nodes: T[]; fetchNext: () => Promise<{ nodes: T[]; fetchNext: () => Promise<any>; pageInfo: { hasNextPage: boolean } }>; pageInfo: { hasNextPage: boolean } }): Promise<T[]> {
+  const all: T[] = [...connection.nodes];
+  let current = connection;
+  while (current.pageInfo.hasNextPage) {
+    current = await current.fetchNext();
+    all.push(...current.nodes);
+  }
+  return all;
+}
+
+/**
+ * Resolve label names to IDs for a given team.
+ * Includes both team-scoped and workspace-level labels, and paginates
+ * to avoid missing labels when there are more than one page.
  */
 async function resolveTeamLabels(teamKey: string): Promise<Map<string, string>> {
   const client = getLinearClient();
@@ -16,22 +31,39 @@ async function resolveTeamLabels(teamKey: string): Promise<Map<string, string>> 
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${teamKey}`);
 
-  const labels = await team.labels();
   const labelMap = new Map<string, string>();
-  for (const label of labels.nodes) {
-    labelMap.set(label.name, label.id);
+
+  // Fetch team-scoped labels (paginated)
+  const teamLabelsConn = await team.labels({ first: 250 });
+  const teamLabels = await collectAllNodes(teamLabelsConn);
+  for (const label of teamLabels) {
+    labelMap.set((label as any).name, (label as any).id);
   }
+
+  // Fetch workspace-level labels (paginated) so labels not scoped to a
+  // team are still resolved (e.g. a workspace-level "agent-ready" label)
+  const wsLabelsConn = await client.issueLabels({ first: 250 });
+  const wsLabels = await collectAllNodes(wsLabelsConn);
+  for (const label of wsLabels) {
+    // Team labels take precedence — only add workspace labels that are not
+    // already in the map
+    if (!labelMap.has((label as any).name)) {
+      labelMap.set((label as any).name, (label as any).id);
+    }
+  }
+
   return labelMap;
 }
 
 /**
- * Get the current label IDs for an issue
+ * Get the current label IDs for an issue (paginated to handle >50 labels)
  */
 async function getIssueLabelIds(issueId: string): Promise<string[]> {
   const client = getLinearClient();
   const issue = await client.issue(issueId);
-  const labels = await issue.labels();
-  return labels.nodes.map((l: any) => l.id);
+  const labelsConn = await issue.labels({ first: 250 });
+  const allLabels = await collectAllNodes(labelsConn);
+  return allLabels.map((l: any) => l.id);
 }
 
 export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<OrganizeTicketResult[]> {
