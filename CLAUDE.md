@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 task-runner is a Linear-powered agent orchestration tool for Claude Code. It pulls tickets from Linear, spins up Claude agents in isolated worktrees, creates PRs, runs automated code reviews, and queues approved work for human merge.
 
+## Linear
+- Team: `JOS`
+- Project: `task-runner`
+
 ## Critical Rules
 
 ### Branch Protection
