@@ -120,6 +120,28 @@ export interface AgentResult {
   exitCode: number | null;
 }
 
+// --- Organize Tickets ---
+
+export interface OrganizeTicketsOptions {
+  team: string;
+  project?: string;
+  states?: string[];
+  addLabels?: string[];
+  removeLabels?: string[];
+  dryRun?: boolean;
+}
+
+export interface OrganizeTicketResult {
+  identifier: string;
+  title: string;
+  action: "labeled" | "blocked" | "skipped";
+  labelsAdded: string[];
+  labelsRemoved: string[];
+  stateChange?: string;
+  blockedBy?: string[];
+  reason: string;
+}
+
 // --- Logger ---
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "OK";

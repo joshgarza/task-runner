@@ -155,6 +155,14 @@ export async function updateIssue(
 }
 
 /**
+ * Set the labels on an issue (replaces all labels)
+ */
+export async function setIssueLabels(issueId: string, labelIds: string[]): Promise<void> {
+  const client = getLinearClient();
+  await client.updateIssue(issueId, { labelIds });
+}
+
+/**
  * Create a new issue in Linear
  */
 export async function createIssue(opts: {
