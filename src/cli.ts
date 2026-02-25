@@ -8,6 +8,7 @@ import { drain } from "./runner/drain.ts";
 import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
+import { editTicket } from "./runner/edit-ticket.ts";
 import { log } from "./logger.ts";
 
 const program = new Command();
@@ -133,6 +134,37 @@ program
       if (result.url) console.log(`URL: ${result.url}`);
     } catch (err: any) {
       log("ERROR", "add-ticket", `Failed to create issue: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("edit-ticket <identifier>")
+  .description("Update an existing Linear issue")
+  .option("--title <text>", "New title")
+  .option("--description <text>", "New description")
+  .option("--priority <n>", "Priority (0=none, 1=urgent, 2=high, 3=medium, 4=low)", (v: string) => {
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 0 || n > 4) throw new Error(`Invalid priority: ${v}. Must be 0-4.`);
+    return n;
+  })
+  .option("--labels <labels...>", "Comma-separated labels (replaces existing)")
+  .option("--status <name>", "Workflow state name")
+  .option("--assignee <email>", "Assignee email address")
+  .action(async (identifier: string, opts) => {
+    try {
+      const result = await editTicket(identifier, {
+        title: opts.title,
+        description: opts.description,
+        priority: opts.priority,
+        labels: opts.labels,
+        status: opts.status,
+        assignee: opts.assignee,
+      });
+      console.log(`\nUpdated: ${result.identifier}`);
+      if (result.url) console.log(`URL: ${result.url}`);
+    } catch (err: any) {
+      log("ERROR", "edit-ticket", `Failed to update issue: ${err.message}`);
       process.exit(1);
     }
   });

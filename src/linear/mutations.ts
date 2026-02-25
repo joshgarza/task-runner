@@ -73,6 +73,88 @@ export async function createChildIssue(
 }
 
 /**
+ * Update an existing issue's fields
+ */
+export async function updateIssue(
+  issueId: string,
+  teamKey: string,
+  opts: {
+    title?: string;
+    description?: string;
+    priority?: number;
+    labelNames?: string[];
+    stateName?: string;
+    assigneeEmail?: string;
+  }
+): Promise<void> {
+  const client = getLinearClient();
+
+  // Find team (needed for resolving labels and states)
+  const teams = await client.teams({ filter: { key: { eq: teamKey } } });
+  const team = teams.nodes[0];
+  if (!team) throw new Error(`Team not found: ${teamKey}`);
+
+  const payload: Record<string, unknown> = {};
+
+  if (opts.title !== undefined) {
+    payload.title = opts.title;
+  }
+
+  if (opts.description !== undefined) {
+    payload.description = opts.description;
+  }
+
+  if (opts.priority !== undefined) {
+    payload.priority = opts.priority;
+  }
+
+  // Resolve labels by name
+  if (opts.labelNames !== undefined) {
+    const teamLabels = await team.labels();
+    const labelIds: string[] = [];
+    for (const name of opts.labelNames) {
+      const label = teamLabels.nodes.find((l) => l.name === name);
+      if (label) {
+        labelIds.push(label.id);
+      } else {
+        log("WARN", "edit-ticket", `Label "${name}" not found in team ${teamKey}. Skipping.`);
+      }
+    }
+    payload.labelIds = labelIds;
+  }
+
+  // Resolve state by name
+  if (opts.stateName) {
+    const states = await team.states();
+    const state = states.nodes.find((s) => s.name === opts.stateName);
+    if (state) {
+      payload.stateId = state.id;
+    } else {
+      throw new Error(
+        `State "${opts.stateName}" not found in team ${teamKey}. Available: ${states.nodes.map((s) => s.name).join(", ")}`
+      );
+    }
+  }
+
+  // Resolve assignee by email
+  if (opts.assigneeEmail) {
+    const users = await client.users({ filter: { email: { eq: opts.assigneeEmail } } });
+    const user = users.nodes[0];
+    if (user) {
+      payload.assigneeId = user.id;
+    } else {
+      throw new Error(`User not found with email: ${opts.assigneeEmail}`);
+    }
+  }
+
+  if (Object.keys(payload).length === 0) {
+    throw new Error("No fields to update");
+  }
+
+  await client.updateIssue(issueId, payload as any);
+}
+
+/**
  * Create a new issue in Linear
  */
 export async function createIssue(opts: {
