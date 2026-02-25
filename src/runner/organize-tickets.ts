@@ -223,12 +223,25 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
     let contextGathered = false;
     if (opts.context && opts.project && !dryRun) {
       try {
-        const projectConfig = getProjectConfig(opts.project);
-        const context = gatherContext(issue, projectConfig.repoPath);
-        if (context) {
-          const comment = formatContextComment(context);
-          await addComment(issue.id, comment);
-          contextGathered = true;
+        // Check if a context comment already exists to avoid duplicates on re-runs
+        const client = getLinearClient();
+        const fullIssue = await client.issue(issue.id);
+        const commentsConn = await fullIssue.comments({ first: 250 });
+        const allComments = await collectAllNodes(commentsConn);
+        const hasContext = allComments.some((c: any) =>
+          c.body?.startsWith("## Codebase Context (auto-generated)")
+        );
+
+        if (hasContext) {
+          log("INFO", issue.identifier, `Context comment already exists, skipping`);
+        } else {
+          const projectConfig = getProjectConfig(opts.project);
+          const context = gatherContext(issue, projectConfig.repoPath);
+          if (context) {
+            const comment = formatContextComment(context);
+            await addComment(issue.id, comment);
+            contextGathered = true;
+          }
         }
       } catch (err: any) {
         log("WARN", issue.identifier, `Context gathering failed: ${err.message}`);
