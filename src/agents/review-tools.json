@@ -1,0 +1,18 @@
+{
+  "tools": [
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash(gh pr diff:*)",
+    "Bash(gh pr view:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git status:*)",
+    "Bash(npm test:*)",
+    "Bash(npm run lint:*)",
+    "Bash(pnpm test:*)",
+    "Bash(pnpm run lint:*)",
+    "Bash(npx tsc:*)",
+    "Bash(ls:*)"
+  ]
+}
