@@ -28,8 +28,6 @@ export async function runIssue(
   const maxAttempts = options.maxAttempts ?? config.defaults.maxAttempts;
 
   let transitionedToInProgress = false;
-  let issueId: string | undefined;
-  let teamKey: string | undefined;
 
   log("INFO", identifier, `Starting pipeline (model: ${model}, attempts: ${maxAttempts})`);
 
@@ -75,9 +73,6 @@ export async function runIssue(
     return failure(identifier, err.message, startTime, 0);
   }
 
-  issueId = issue.id;
-  teamKey = issue.teamKey;
-
   // 4. Transition to In Progress
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
@@ -93,6 +88,7 @@ export async function runIssue(
   try {
     worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch);
   } catch (err: any) {
+    await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
   }
 
