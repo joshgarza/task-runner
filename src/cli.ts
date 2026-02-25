@@ -56,10 +56,11 @@ program
 
 program
   .command("drain")
-  .description("Drain all agent-ready issues sequentially")
+  .description("Drain all agent-ready issues with configurable concurrency")
   .option("--label <label>", "Label to filter by")
   .option("--project <project>", "Linear project name to filter by")
   .option("--limit <n>", "Maximum issues to process", (v: string) => parseInt(v, 10))
+  .option("--concurrency <n>", "Number of parallel agents (default: from config)", (v: string) => parseInt(v, 10))
   .option("--dry-run", "List agent-ready issues without processing them")
   .action(async (opts) => {
     try {
@@ -67,6 +68,7 @@ program
         label: opts.label,
         project: opts.project,
         limit: opts.limit,
+        concurrency: opts.concurrency,
         dryRun: opts.dryRun,
       });
 

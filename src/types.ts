@@ -29,6 +29,7 @@ export interface DefaultsConfig {
   contextMaxBudgetUsd: number;
   maxAttempts: number;
   agentTimeoutMs: number;
+  drainConcurrency: number;
 }
 
 export interface GithubConfig {
@@ -100,6 +101,7 @@ export interface DrainOptions {
   label?: string;
   project?: string;
   limit?: number;
+  concurrency?: number;
   dryRun?: boolean;
 }
 

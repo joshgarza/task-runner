@@ -90,6 +90,7 @@ export function loadConfig(): TaskRunnerConfig {
       contextMaxBudgetUsd: raw.defaults?.contextMaxBudgetUsd ?? 0.5,
       maxAttempts: raw.defaults?.maxAttempts ?? 2,
       agentTimeoutMs: raw.defaults?.agentTimeoutMs ?? 900_000,
+      drainConcurrency: raw.defaults?.drainConcurrency ?? 1,
     },
     github: {
       prLabels: raw.github?.prLabels ?? ["agent-generated"],
