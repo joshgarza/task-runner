@@ -1,11 +1,13 @@
 // Triage Linear tickets and label unblocked ones as agent-ready
 
-import { loadConfig } from "../config.ts";
+import { loadConfig, getProjectConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { fetchIssuesByTeamAndStates, fetchBlockingRelations } from "../linear/queries.ts";
-import { transitionIssue, setIssueLabels } from "../linear/mutations.ts";
+import { transitionIssue, setIssueLabels, addComment } from "../linear/mutations.ts";
 import { getLinearClient } from "../linear/client.ts";
-import type { OrganizeTicketsOptions, OrganizeTicketResult } from "../types.ts";
+import { spawnAgent } from "../agents/spawn.ts";
+import { buildContextPrompt } from "../agents/context-prompt.ts";
+import type { OrganizeTicketsOptions, OrganizeTicketResult, ContextResult, LinearIssue } from "../types.ts";
 
 /**
  * Collect all nodes from a paginated Linear connection
@@ -64,6 +66,84 @@ async function getIssueLabelIds(issueId: string): Promise<string[]> {
   const labelsConn = await issue.labels({ first: 250 });
   const allLabels = await collectAllNodes(labelsConn);
   return allLabels.map((l: any) => l.id);
+}
+
+/**
+ * Spawn a headless Claude instance to gather codebase context for a ticket.
+ * Returns parsed context or null on failure.
+ */
+function gatherContext(issue: LinearIssue, repoPath: string): ContextResult | null {
+  const config = loadConfig();
+  const prompt = buildContextPrompt(issue);
+
+  log("INFO", issue.identifier, `Gathering codebase context...`);
+
+  const result = spawnAgent({
+    prompt,
+    cwd: repoPath,
+    model: config.defaults.contextModel,
+    maxTurns: config.defaults.contextMaxTurns,
+    maxBudgetUsd: config.defaults.contextMaxBudgetUsd,
+    toolsFile: "context-tools.json",
+    timeoutMs: config.defaults.agentTimeoutMs,
+    context: `context-${issue.identifier}`,
+  });
+
+  if (!result.success) {
+    log("WARN", issue.identifier, `Context agent failed (exit=${result.exitCode})`);
+    return null;
+  }
+
+  // Parse the JSON output (claude --output-format json wraps in { result: ... })
+  let text = result.output;
+  try {
+    const parsed = JSON.parse(result.output);
+    if (parsed.result) text = parsed.result;
+  } catch {
+    // Use raw output
+  }
+
+  const jsonMatch = text.match(/\{[\s\S]*"relevantFiles"[\s\S]*\}/);
+  if (!jsonMatch) {
+    log("WARN", issue.identifier, `No structured context found in agent output`);
+    return null;
+  }
+
+  try {
+    const context = JSON.parse(jsonMatch[0]) as ContextResult;
+    log("OK", issue.identifier, `Context gathered: ${context.relevantFiles.length} files, ${context.acceptanceCriteria.length} criteria`);
+    return context;
+  } catch {
+    log("WARN", issue.identifier, `Failed to parse context JSON`);
+    return null;
+  }
+}
+
+/**
+ * Format context result as a Linear comment body
+ */
+function formatContextComment(context: ContextResult): string {
+  const lines: string[] = ["## Codebase Context (auto-generated)", ""];
+
+  lines.push(context.codeContext, "");
+
+  if (context.relevantFiles.length > 0) {
+    lines.push("### Relevant Files", "");
+    for (const file of context.relevantFiles) {
+      lines.push(`- \`${file}\``);
+    }
+    lines.push("");
+  }
+
+  if (context.acceptanceCriteria.length > 0) {
+    lines.push("### Suggested Acceptance Criteria", "");
+    for (const criterion of context.acceptanceCriteria) {
+      lines.push(`- [ ] ${criterion}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
 }
 
 export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<OrganizeTicketResult[]> {
@@ -139,7 +219,23 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
       continue;
     }
 
-    // Not blocked — apply label changes
+    // Not blocked — gather context if enabled
+    let contextGathered = false;
+    if (opts.context && opts.project && !dryRun) {
+      try {
+        const projectConfig = getProjectConfig(opts.project);
+        const context = gatherContext(issue, projectConfig.repoPath);
+        if (context) {
+          const comment = formatContextComment(context);
+          await addComment(issue.id, comment);
+          contextGathered = true;
+        }
+      } catch (err: any) {
+        log("WARN", issue.identifier, `Context gathering failed: ${err.message}`);
+      }
+    }
+
+    // Apply label changes
     const labelsAdded: string[] = [];
     const labelsRemoved: string[] = [];
 
@@ -205,6 +301,7 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
       labelsAdded,
       labelsRemoved,
       stateChange,
+      contextGathered: contextGathered || undefined,
       reason: `Unblocked: ${changeStr}`,
     });
   }
