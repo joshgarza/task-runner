@@ -24,6 +24,9 @@ export interface DefaultsConfig {
   reviewModel: string;
   reviewMaxTurns: number;
   reviewMaxBudgetUsd: number;
+  contextModel: string;
+  contextMaxTurns: number;
+  contextMaxBudgetUsd: number;
   maxAttempts: number;
   agentTimeoutMs: number;
 }
@@ -128,6 +131,7 @@ export interface OrganizeTicketsOptions {
   states?: string[];
   addLabels?: string[];
   removeLabels?: string[];
+  context?: boolean;
   dryRun?: boolean;
 }
 
@@ -139,7 +143,16 @@ export interface OrganizeTicketResult {
   labelsRemoved: string[];
   stateChange?: string;
   blockedBy?: string[];
+  contextGathered?: boolean;
   reason: string;
+}
+
+// --- Context Gathering ---
+
+export interface ContextResult {
+  relevantFiles: string[];
+  codeContext: string;
+  acceptanceCriteria: string[];
 }
 
 // --- Logger ---
