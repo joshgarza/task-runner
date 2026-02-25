@@ -7,6 +7,10 @@ import type { AgentTypeDefinition, ResolvedAgentType } from "../types.ts";
 
 const REGISTRY_PATH = resolve(import.meta.dirname, "agent-registry.json");
 
+// In-memory cache — registry is read-only during a run.
+// Invalidated only by addAgentType (the sole write path).
+let cachedRegistry: AgentRegistry | null = null;
+
 // Patterns that are never allowed — blanket bash, network, destructive.
 // Each entry is a prefix/substring to match against tool strings.
 // "Bash(*)" blocks unrestricted bash access.
@@ -28,8 +32,10 @@ export type AgentRegistry = Record<string, AgentTypeDefinition>;
  * Validates safety constraints on every load.
  */
 export function loadRegistry(): AgentRegistry {
+  if (cachedRegistry) return cachedRegistry;
   const raw = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
   validateRegistry(raw);
+  cachedRegistry = raw;
   return raw;
 }
 
@@ -136,5 +142,6 @@ export function addAgentType(
   validateRegistry(updated);
 
   writeFileSync(REGISTRY_PATH, JSON.stringify(updated, null, 2) + "\n");
+  cachedRegistry = updated; // Update cache after write
   log("INFO", "registry", `Added agent type "${name}" to registry`);
 }

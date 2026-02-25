@@ -95,6 +95,12 @@ export async function createProposal(opts: {
     const agentReadyId = labelMap.get(config.linear.agentLabel);
     const needsApprovalId = labelMap.get(config.linear.needsApprovalLabel);
 
+    if (!needsApprovalId) {
+      log("WARN", issue.identifier,
+        `Label "${config.linear.needsApprovalLabel}" not found in Linear team ${issue.teamKey}. ` +
+        `Create it in Linear or the approval flow will silently skip label assignment.`);
+    }
+
     const newLabelIds = currentLabelIds.filter((id) => id !== agentReadyId);
     if (needsApprovalId && !newLabelIds.includes(needsApprovalId)) {
       newLabelIds.push(needsApprovalId);
@@ -222,6 +228,12 @@ export async function approveProposal(
     const agentReadyId = labelMap.get(config.linear.agentLabel);
     const agentTypeLabel = `agent:${proposal.proposedAgentType}`;
     const agentTypeLabelId = labelMap.get(agentTypeLabel);
+
+    if (!agentTypeLabelId) {
+      log("WARN", "proposals",
+        `Label "${agentTypeLabel}" not found in Linear team ${issue.teamKey}. ` +
+        `Create it in Linear so the dispatcher can route to the new agent type.`);
+    }
 
     // Remove needs-human-approval, add agent-ready
     const newLabelIds = currentLabelIds.filter((lid) => lid !== needsApprovalId);
