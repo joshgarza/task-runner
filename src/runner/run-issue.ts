@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
-import { fetchIssue } from "../linear/queries.ts";
+import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, addComment, createChildIssue } from "../linear/mutations.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
@@ -63,6 +63,24 @@ export async function runIssue(
       startTime,
       0
     );
+  }
+
+  // 2.5. Blocking safety net — re-check blocking relations before committing resources
+  try {
+    const blockers = await fetchBlockingRelations(issue.id);
+    const activeBlockers = blockers.filter((b) => !b.done);
+    if (activeBlockers.length > 0) {
+      const blockerList = activeBlockers.map((b) => `${b.identifier} ("${b.title}", ${b.stateName})`).join(", ");
+      return failure(
+        identifier,
+        `Issue is blocked by ${activeBlockers.length} active issue(s): ${blockerList}`,
+        startTime,
+        0
+      );
+    }
+  } catch (err: any) {
+    log("WARN", identifier, `Failed to check blocking relations: ${err.message}`);
+    // Non-fatal — proceed if the check fails (e.g. API error)
   }
 
   // 3. Resolve project config (issue must belong to a configured project)

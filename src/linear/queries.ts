@@ -292,6 +292,56 @@ export async function fetchFilteredIssues(opts: {
 }
 
 /**
+ * Count how many non-done issues a given issue blocks (forward block count).
+ * This is the inverse of fetchBlockingRelations — it finds who *I* block.
+ *
+ * - Direct relations with type "blocks" → relatedIssue is blocked by this issue
+ * - Inverse relations with type "blocked_by" → source issue is blocked by this issue
+ * - Only counts issues where state.type is NOT "completed" or "canceled"
+ */
+export async function fetchForwardBlockCount(issueId: string): Promise<number> {
+  const client = getLinearClient();
+  const issue = await client.issue(issueId);
+
+  const seen = new Set<string>();
+  let count = 0;
+
+  // Direct relations: type "blocks" means relatedIssue is blocked by this issue
+  const relations = await issue.relations();
+  for (const rel of relations.nodes) {
+    if (rel.type === "blocks") {
+      const related = await rel.relatedIssue;
+      if (related && !seen.has(related.id)) {
+        seen.add(related.id);
+        const state = await related.state;
+        if (state?.type !== "completed" && state?.type !== "canceled") {
+          count++;
+        }
+      }
+    }
+  }
+
+  // Inverse relations: type "blocked_by" means the source issue is blocked by this issue
+  if (typeof issue.inverseRelations === "function") {
+    const inverseRelations = await issue.inverseRelations();
+    for (const rel of inverseRelations.nodes) {
+      if (rel.type === "blocked_by") {
+        const source = await rel.issue;
+        if (source && !seen.has(source.id)) {
+          seen.add(source.id);
+          const state = await source.state;
+          if (state?.type !== "completed" && state?.type !== "canceled") {
+            count++;
+          }
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
  * Fetch recent activity for standup digest
  */
 export async function fetchRecentActivity(
