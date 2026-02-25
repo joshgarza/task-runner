@@ -1,24 +1,23 @@
-// Loop through all "agent-ready" issues sequentially
+// Drain all "agent-ready" issues with configurable concurrency
 
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { acquireLock, releaseLock } from "../lock.ts";
 import { fetchAgentReadyIssues, fetchStaleIssues } from "../linear/queries.ts";
 import { runIssue } from "./run-issue.ts";
-import type { DrainOptions, RunResult } from "../types.ts";
+import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
 export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
   const config = loadConfig();
 
   const label = options.label ?? config.linear.agentLabel;
   const limit = options.limit ?? 50;
+  const concurrency = options.concurrency ?? config.defaults.drainConcurrency;
 
   if (!acquireLock()) {
     log("WARN", null, "Lock held by another worker, skipping drain");
     return [];
   }
-
-  const results: RunResult[] = [];
 
   try {
     // If a specific project is given, only fetch for that project.
@@ -39,6 +38,8 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       }
     }
 
+    // Collect all issues across projects, respecting the limit
+    const allIssues: LinearIssue[] = [];
     for (const projectName of projectNames) {
       log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
 
@@ -58,55 +59,104 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       log("INFO", null, `Found ${issues.length} issue(s) for "${projectName}"`);
 
       for (const issue of issues) {
-        if (results.length >= limit) {
-          log("INFO", null, `Reached limit (${limit}), stopping`);
-          break;
-        }
+        if (allIssues.length >= limit) break;
+        allIssues.push(issue);
+      }
 
-        if (options.dryRun) {
-          const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
-          log("INFO", issue.identifier, `[dry-run] ${issue.title} | project: ${issue.projectName ?? "none"}${labels} (${issue.url})`);
-          results.push({
-            issueId: issue.identifier,
-            success: true,
-            durationMs: 0,
-            attempts: 0,
-          });
-          continue;
-        }
-
-        log("INFO", null, `Processing ${issue.identifier}: ${issue.title}`);
-
-        try {
-          const result = await runIssue(issue.identifier);
-          results.push(result);
-
-          if (result.success) {
-            log("OK", issue.identifier, `Pipeline complete — PR: ${result.prUrl}`);
-          } else {
-            log("ERROR", issue.identifier, `Pipeline failed: ${result.error}`);
-          }
-        } catch (err: any) {
-          log("ERROR", issue.identifier, `Unexpected error: ${err.message}`);
-          results.push({
-            issueId: issue.identifier,
-            success: false,
-            error: err.message,
-            durationMs: 0,
-            attempts: 0,
-          });
-        }
+      if (allIssues.length >= limit) {
+        log("INFO", null, `Reached limit (${limit}), stopping fetch`);
+        break;
       }
     }
 
-    // Summary
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
-    const suffix = options.dryRun ? " (dry run)" : "";
-    log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
+    // Handle dry run
+    if (options.dryRun) {
+      const results: RunResult[] = allIssues.map((issue) => {
+        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
+        log("INFO", issue.identifier, `[dry-run] ${issue.title} | project: ${issue.projectName ?? "none"}${labels} (${issue.url})`);
+        return {
+          issueId: issue.identifier,
+          success: true,
+          durationMs: 0,
+          attempts: 0,
+        };
+      });
+      logSummary(results, true);
+      return results;
+    }
+
+    // Process issues with concurrency pool
+    log("INFO", null, `Processing ${allIssues.length} issue(s) with concurrency ${concurrency}`);
+    const results = await runWithConcurrency(allIssues, concurrency);
+
+    logSummary(results, false);
+    return results;
   } finally {
     releaseLock();
   }
+}
+
+async function runWithConcurrency(
+  issues: LinearIssue[],
+  concurrency: number
+): Promise<RunResult[]> {
+  const results: RunResult[] = [];
+
+  if (concurrency <= 1) {
+    // Sequential — preserves original behavior
+    for (const issue of issues) {
+      results.push(await processIssue(issue));
+    }
+    return results;
+  }
+
+  // Parallel — process up to `concurrency` issues at a time
+  let index = 0;
+
+  async function worker(): Promise<void> {
+    while (index < issues.length) {
+      const issue = issues[index++];
+      results.push(await processIssue(issue));
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, issues.length) },
+    () => worker()
+  );
+  await Promise.allSettled(workers);
 
   return results;
+}
+
+async function processIssue(issue: LinearIssue): Promise<RunResult> {
+  log("INFO", null, `Processing ${issue.identifier}: ${issue.title}`);
+
+  try {
+    const result = await runIssue(issue.identifier);
+
+    if (result.success) {
+      log("OK", issue.identifier, `Pipeline complete — PR: ${result.prUrl}`);
+    } else {
+      log("ERROR", issue.identifier, `Pipeline failed: ${result.error}`);
+    }
+
+    return result;
+  } catch (err: any) {
+    log("ERROR", issue.identifier, `Unexpected error: ${err.message}`);
+    return {
+      issueId: issue.identifier,
+      success: false,
+      error: err.message,
+      durationMs: 0,
+      attempts: 0,
+    };
+  }
+}
+
+function logSummary(results: RunResult[], dryRun: boolean): void {
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success).length;
+  const suffix = dryRun ? " (dry run)" : "";
+  log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
 }
