@@ -121,3 +121,31 @@ export function getProjectConfig(projectName: string): TaskRunnerConfig["project
   }
   return project;
 }
+
+/**
+ * Auto-detect project (and optionally team) from the current working directory.
+ * Matches cwd against configured repoPath values. Also matches worktree
+ * subdirectories since .task-runner-worktrees/ lives under repoPath.
+ *
+ * Returns null if cwd doesn't match any configured project.
+ */
+export function detectProjectFromCwd(): { project: string; team?: string } | null {
+  const config = loadConfig();
+  const cwd = resolve(process.cwd());
+
+  let bestMatch: { project: string; team?: string; pathLen: number } | null = null;
+
+  for (const [name, projectConfig] of Object.entries(config.projects)) {
+    const repoPath = resolve(projectConfig.repoPath);
+
+    // Check if cwd is the repoPath or a subdirectory of it
+    if (cwd === repoPath || cwd.startsWith(repoPath + "/")) {
+      if (!bestMatch || repoPath.length > bestMatch.pathLen) {
+        bestMatch = { project: name, team: projectConfig.team, pathLen: repoPath.length };
+      }
+    }
+  }
+
+  if (!bestMatch) return null;
+  return { project: bestMatch.project, team: bestMatch.team };
+}

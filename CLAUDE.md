@@ -203,7 +203,8 @@ src/
       "repoPath": "/home/josh/coding/claude/task-runner/main",
       "defaultBranch": "main",
       "testCommand": "npm test",
-      "lintCommand": "npm run lint"
+      "lintCommand": "npm run lint",
+      "team": "JOS"
     }
   },
   "linear": {
@@ -229,4 +230,4 @@ src/
 }
 ```
 
-Project names must match Linear project names exactly. `prLabels` is an empty array by default (no auto-labels). `reviewApprovedLabel` is optional.
+Project names must match Linear project names exactly. `team` is optional — when set, `--team` is auto-detected from cwd. `prLabels` is an empty array by default (no auto-labels). `reviewApprovedLabel` is optional.

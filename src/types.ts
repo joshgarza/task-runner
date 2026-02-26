@@ -8,6 +8,7 @@ export interface ProjectConfig {
   testCommand: string;
   lintCommand: string;
   buildCommand?: string;
+  team?: string;
 }
 
 export interface LinearConfig {
