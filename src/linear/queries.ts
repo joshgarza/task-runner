@@ -183,7 +183,7 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
   const seen = new Set<string>();
 
   // Direct relations: type "blocked_by" means relatedIssue blocks this issue
-  const relations = await issue.relations();
+  const relations = await issue.relations({ first: 250 });
   for (const rel of relations.nodes) {
     if (rel.type === "blocked_by") {
       const related = await rel.relatedIssue;
@@ -202,7 +202,7 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
 
   // Inverse relations: type "blocks" means the source issue blocks this one
   if (typeof issue.inverseRelations === "function") {
-    const inverseRelations = await issue.inverseRelations();
+    const inverseRelations = await issue.inverseRelations({ first: 250 });
     for (const rel of inverseRelations.nodes) {
       if (rel.type === "blocks") {
         const source = await rel.issue;
@@ -289,6 +289,56 @@ export async function fetchFilteredIssues(opts: {
   }
 
   return results;
+}
+
+/**
+ * Count how many non-done issues a given issue blocks (forward block count).
+ * This is the inverse of fetchBlockingRelations — it finds who *I* block.
+ *
+ * - Direct relations with type "blocks" → relatedIssue is blocked by this issue
+ * - Inverse relations with type "blocked_by" → source issue is blocked by this issue
+ * - Only counts issues where state.type is NOT "completed" or "canceled"
+ */
+export async function fetchForwardBlockCount(issueId: string): Promise<number> {
+  const client = getLinearClient();
+  const issue = await client.issue(issueId);
+
+  const seen = new Set<string>();
+  let count = 0;
+
+  // Direct relations: type "blocks" means relatedIssue is blocked by this issue
+  const relations = await issue.relations({ first: 250 });
+  for (const rel of relations.nodes) {
+    if (rel.type === "blocks") {
+      const related = await rel.relatedIssue;
+      if (related && !seen.has(related.id)) {
+        seen.add(related.id);
+        const state = await related.state;
+        if (state?.type !== "completed" && state?.type !== "canceled") {
+          count++;
+        }
+      }
+    }
+  }
+
+  // Inverse relations: type "blocked_by" means the source issue is blocked by this issue
+  if (typeof issue.inverseRelations === "function") {
+    const inverseRelations = await issue.inverseRelations({ first: 250 });
+    for (const rel of inverseRelations.nodes) {
+      if (rel.type === "blocked_by") {
+        const source = await rel.issue;
+        if (source && !seen.has(source.id)) {
+          seen.add(source.id);
+          const state = await source.state;
+          if (state?.type !== "completed" && state?.type !== "canceled") {
+            count++;
+          }
+        }
+      }
+    }
+  }
+
+  return count;
 }
 
 /**

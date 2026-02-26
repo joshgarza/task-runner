@@ -3,7 +3,7 @@
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { acquireLock, releaseLock } from "../lock.ts";
-import { fetchAgentReadyIssues, fetchStaleIssues } from "../linear/queries.ts";
+import { fetchAgentReadyIssues, fetchStaleIssues, fetchForwardBlockCount } from "../linear/queries.ts";
 import { runIssue } from "./run-issue.ts";
 import { runWithConcurrency } from "../concurrency.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
@@ -69,6 +69,34 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       if (allIssues.length >= limit) {
         log("INFO", null, `Reached limit (${limit}), stopping fetch`);
         break;
+      }
+    }
+
+    // Prioritize: sort by forward block count (most-blocking first)
+    if (allIssues.length > 1) {
+      try {
+        log("INFO", null, "Fetching dependency counts for prioritization...");
+        const blockCounts = await Promise.all(
+          allIssues.map((issue) => fetchForwardBlockCount(issue.id))
+        );
+
+        // Build indexed pairs and stable-sort descending by block count
+        const indexed = allIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
+        indexed.sort((a, b) => b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
+
+        // Replace allIssues in-place with sorted order
+        for (let i = 0; i < indexed.length; i++) {
+          allIssues[i] = indexed[i].issue;
+        }
+
+        // Log prioritized order
+        for (let i = 0; i < indexed.length; i++) {
+          const entry = indexed[i];
+          const suffix = entry.blockCount > 0 ? ` (blocks ${entry.blockCount} issue(s))` : "";
+          log("INFO", entry.issue.identifier, `Priority #${i + 1}: ${entry.issue.title}${suffix}`);
+        }
+      } catch (err: any) {
+        log("WARN", null, `Failed to fetch dependency counts, proceeding with original order: ${err.message}`);
       }
     }
 
