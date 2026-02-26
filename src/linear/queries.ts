@@ -13,7 +13,7 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const project = await issue.project;
   const labelsConn = await issue.labels({ first: 250 });
   const allLabels = await collectAllNodes(labelsConn);
-  const commentsConn = await issue.comments();
+  const commentsConn = await issue.comments({ first: 250 });
 
   if (!team) {
     throw new Error(`Issue ${issue.identifier} has no team`);
@@ -252,13 +252,14 @@ export async function fetchFilteredIssues(opts: {
     filter.labels = { name: { in: opts.labelNames } };
   }
 
-  const issues = await client.issues({
+  const issuesConn = await client.issues({
     filter,
-    first: 100,
+    first: 250,
   });
+  const allIssueNodes = await collectAllNodes(issuesConn);
 
   const results: LinearIssue[] = [];
-  for (const issue of issues.nodes) {
+  for (const issue of allIssueNodes) {
     if (opts.includeComments) {
       results.push(await toLinearIssue(issue));
     } else {
