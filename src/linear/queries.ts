@@ -183,7 +183,7 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
   const seen = new Set<string>();
 
   // Direct relations: type "blocked_by" means relatedIssue blocks this issue
-  const relations = await issue.relations();
+  const relations = await issue.relations({ first: 250 });
   for (const rel of relations.nodes) {
     if (rel.type === "blocked_by") {
       const related = await rel.relatedIssue;
@@ -202,7 +202,7 @@ export async function fetchBlockingRelations(issueId: string): Promise<{
 
   // Inverse relations: type "blocks" means the source issue blocks this one
   if (typeof issue.inverseRelations === "function") {
-    const inverseRelations = await issue.inverseRelations();
+    const inverseRelations = await issue.inverseRelations({ first: 250 });
     for (const rel of inverseRelations.nodes) {
       if (rel.type === "blocks") {
         const source = await rel.issue;

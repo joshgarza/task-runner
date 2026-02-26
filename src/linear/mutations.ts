@@ -20,7 +20,7 @@ export async function transitionIssue(
   const team = teams.nodes[0];
   if (!team) throw new Error(`Team not found: ${teamKey}`);
 
-  const states = await team.states();
+  const states = await team.states({ first: 250 });
   const targetState = states.nodes.find((s) => s.name === targetStateName);
   if (!targetState) {
     throw new Error(
@@ -114,7 +114,7 @@ export async function updateIssue(
 
   // Resolve state by name
   if (opts.stateName) {
-    const states = await team.states();
+    const states = await team.states({ first: 250 });
     const state = states.nodes.find((s) => s.name === opts.stateName);
     if (state) {
       payload.stateId = state.id;
@@ -204,7 +204,7 @@ export async function createIssue(opts: {
 
   // Resolve state by name
   if (opts.stateName) {
-    const states = await team.states();
+    const states = await team.states({ first: 250 });
     const state = states.nodes.find((s) => s.name === opts.stateName);
     if (state) {
       payload.stateId = state.id;
