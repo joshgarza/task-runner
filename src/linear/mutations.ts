@@ -60,18 +60,14 @@ export async function createChildIssue(
   // Resolve label IDs (paginated, includes workspace labels)
   const labelIds = await resolveLabels(teamKey, labelNames, "create-child-issue");
 
-  const payload: any = {
+  const payload: LinearDocument.IssueCreateInput = {
     teamId: team.id,
     title,
     description,
     parentId,
     labelIds,
+    ...(projectId ? { projectId } : {}),
   };
-
-  // Inherit parent's project so sub-issues are discoverable by project-scoped queries
-  if (projectId) {
-    payload.projectId = projectId;
-  }
 
   const result = await client.createIssue(payload);
 
