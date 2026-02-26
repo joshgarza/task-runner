@@ -136,7 +136,55 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
   const results: OrganizeTicketResult[] = [];
 
   for (const issue of issues) {
-    // Skip issues that already have all the labels we'd add and none we'd remove
+    // Always check blocking relations first — a ticket may have been labeled
+    // agent-ready in a previous run but gained blockers since then.
+    const allBlockers = await fetchBlockingRelations(issue.id);
+    const activeBlockers = allBlockers.filter((b) => !b.done);
+
+    if (activeBlockers.length > 0) {
+      const blockerList = activeBlockers.map((b) => `${b.identifier} (${b.stateName})`);
+
+      // Strip addLabels (e.g. agent-ready) from blocked tickets to prevent
+      // drain from picking them up and immediately failing.
+      const labelsRemoved: string[] = [];
+      const hasAnyAddLabel = addLabels.some((l) => issue.labels.includes(l));
+
+      if (hasAnyAddLabel && !dryRun) {
+        const currentLabelIds = await getIssueLabelIds(issue.id);
+        const newLabelIds = new Set(currentLabelIds);
+
+        for (const name of addLabels) {
+          const id = teamLabels.get(name);
+          if (id && newLabelIds.has(id)) {
+            newLabelIds.delete(id);
+            labelsRemoved.push(name);
+          }
+        }
+
+        if (labelsRemoved.length > 0) {
+          await setIssueLabels(issue.id, [...newLabelIds]);
+          log("INFO", issue.identifier, `${prefix}Removed stale labels: ${labelsRemoved.join(", ")}`);
+        }
+      } else if (hasAnyAddLabel && dryRun) {
+        for (const name of addLabels) {
+          if (issue.labels.includes(name)) labelsRemoved.push(name);
+        }
+      }
+
+      log("INFO", issue.identifier, `${prefix}Blocked by: ${blockerList.join(", ")}`);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "blocked",
+        labelsAdded: [],
+        labelsRemoved,
+        blockedBy: activeBlockers.map((b) => b.identifier),
+        reason: `Blocked by ${blockerList.join(", ")}`,
+      });
+      continue;
+    }
+
+    // Skip unblocked issues that already have all target labels and state
     const hasAllAddLabels = addLabels.every((l) => issue.labels.includes(l));
     const hasNoRemoveLabels = removeLabels.every((l) => !issue.labels.includes(l));
 
@@ -149,25 +197,6 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
         labelsAdded: [],
         labelsRemoved: [],
         reason: "Already has target labels",
-      });
-      continue;
-    }
-
-    // Check for blocking relations
-    const allBlockers = await fetchBlockingRelations(issue.id);
-    const activeBlockers = allBlockers.filter((b) => !b.done);
-
-    if (activeBlockers.length > 0) {
-      const blockerList = activeBlockers.map((b) => `${b.identifier} (${b.stateName})`);
-      log("INFO", issue.identifier, `${prefix}Blocked by: ${blockerList.join(", ")}`);
-      results.push({
-        identifier: issue.identifier,
-        title: issue.title,
-        action: "blocked",
-        labelsAdded: [],
-        labelsRemoved: [],
-        blockedBy: activeBlockers.map((b) => b.identifier),
-        reason: `Blocked by ${blockerList.join(", ")}`,
       });
       continue;
     }
