@@ -307,7 +307,7 @@ export async function fetchForwardBlockCount(issueId: string): Promise<number> {
   let count = 0;
 
   // Direct relations: type "blocks" means relatedIssue is blocked by this issue
-  const relations = await issue.relations();
+  const relations = await issue.relations({ first: 250 });
   for (const rel of relations.nodes) {
     if (rel.type === "blocks") {
       const related = await rel.relatedIssue;
@@ -323,7 +323,7 @@ export async function fetchForwardBlockCount(issueId: string): Promise<number> {
 
   // Inverse relations: type "blocked_by" means the source issue is blocked by this issue
   if (typeof issue.inverseRelations === "function") {
-    const inverseRelations = await issue.inverseRelations();
+    const inverseRelations = await issue.inverseRelations({ first: 250 });
     for (const rel of inverseRelations.nodes) {
       if (rel.type === "blocked_by") {
         const source = await rel.issue;
