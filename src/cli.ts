@@ -9,6 +9,7 @@ import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
+import { listTickets } from "./runner/list-tickets.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
 import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
 import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
@@ -182,6 +183,29 @@ program
       if (result.url) console.log(`URL: ${result.url}`);
     } catch (err: any) {
       log("ERROR", "edit-ticket", `Failed to update issue: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("list-tickets")
+  .description("List Linear issues with filtering")
+  .requiredOption("--team <key>", "Team key (e.g. JOS)")
+  .option("--status <states...>", "Filter by workflow state names")
+  .option("--project <name>", "Filter by Linear project name")
+  .option("--labels <labels...>", "Filter by label names")
+  .option("--comments", "Include comment bodies for each issue")
+  .action(async (opts) => {
+    try {
+      await listTickets({
+        team: opts.team,
+        status: opts.status,
+        project: opts.project,
+        labels: opts.labels,
+        comments: opts.comments,
+      });
+    } catch (err: any) {
+      log("ERROR", "list-tickets", `Failed: ${err.message}`);
       process.exit(1);
     }
   });
