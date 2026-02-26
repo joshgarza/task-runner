@@ -292,7 +292,8 @@ export async function runIssue(
             issue.teamKey,
             `Fix review feedback: ${issue.identifier}`,
             issueBody,
-            [config.linear.agentLabel]
+            [config.linear.agentLabel],
+            issue.projectId
           );
           log("INFO", identifier, `Created fix ticket: ${childId}`);
           addPRComment(prUrl, `Review needs fixes. Created follow-up ticket: ${childId}\n\n${verdict.summary}`);

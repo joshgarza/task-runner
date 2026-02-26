@@ -47,7 +47,8 @@ export async function createChildIssue(
   teamKey: string,
   title: string,
   description: string,
-  labelNames: string[]
+  labelNames: string[],
+  projectId?: string | null
 ): Promise<string> {
   const client = getLinearClient();
 
@@ -59,13 +60,16 @@ export async function createChildIssue(
   // Resolve label IDs (paginated, includes workspace labels)
   const labelIds = await resolveLabels(teamKey, labelNames, "create-child-issue");
 
-  const result = await client.createIssue({
+  const payload: LinearDocument.IssueCreateInput = {
     teamId: team.id,
     title,
     description,
     parentId,
     labelIds,
-  });
+    ...(projectId ? { projectId } : {}),
+  };
+
+  const result = await client.createIssue(payload);
 
   const issue = await result.issue;
   return issue?.identifier ?? "unknown";

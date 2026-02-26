@@ -10,8 +10,6 @@
     "Bash(git status:*)",
     "Bash(npm test:*)",
     "Bash(npm run lint:*)",
-    "Bash(pnpm test:*)",
-    "Bash(pnpm run lint:*)",
     "Bash(npx tsc:*)",
     "Bash(ls:*)"
   ]
