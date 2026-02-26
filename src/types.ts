@@ -58,6 +58,7 @@ export interface LinearIssue {
   stateName: string;
   stateId: string;
   projectName: string | null;
+  projectId: string | null;
   labels: string[];
   comments: string[];
   url: string;

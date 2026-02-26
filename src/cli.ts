@@ -68,10 +68,9 @@ program
   .option("--dry-run", "List agent-ready issues without processing them")
   .action(async (opts) => {
     try {
-      const detected = detectProjectFromCwd();
       const results = await drain({
         label: opts.label,
-        project: opts.project ?? detected?.project,
+        project: opts.project,
         limit: opts.limit,
         concurrency: opts.concurrency,
         dryRun: opts.dryRun,
