@@ -156,6 +156,58 @@ export async function setIssueLabels(issueId: string, labelIds: string[]): Promi
 }
 
 /**
+ * Create a new label in Linear, scoped to a team or workspace-wide.
+ * Pre-checks for duplicate names in the target scope.
+ */
+export async function createLabel(opts: {
+  name: string;
+  teamKey?: string;
+  color?: string;
+  description?: string;
+}): Promise<{ name: string; id: string }> {
+  const client = getLinearClient();
+
+  let teamId: string | undefined;
+
+  if (opts.teamKey) {
+    // Resolve team and check for duplicate name among team labels
+    const teams = await client.teams({ filter: { key: { eq: opts.teamKey } } });
+    const team = teams.nodes[0];
+    if (!team) throw new Error(`Team not found: ${opts.teamKey}`);
+    teamId = team.id;
+
+    const existingLabels = await resolveTeamLabels(opts.teamKey);
+    if (existingLabels.has(opts.name)) {
+      throw new Error(`Label "${opts.name}" already exists in team ${opts.teamKey}`);
+    }
+  } else {
+    // Check workspace-level labels for duplicate
+    const wsLabels = await client.issueLabels({
+      first: 250,
+      filter: { name: { eq: opts.name } },
+    });
+    if (wsLabels.nodes.length > 0) {
+      throw new Error(`Label "${opts.name}" already exists at the workspace level`);
+    }
+  }
+
+  const payload: { name: string; teamId?: string; color?: string; description?: string } = {
+    name: opts.name,
+  };
+  if (teamId) payload.teamId = teamId;
+  if (opts.color) payload.color = opts.color;
+  if (opts.description) payload.description = opts.description;
+
+  const result = await client.createIssueLabel(payload);
+  const label = await result.issueLabel;
+
+  return {
+    name: label?.name ?? opts.name,
+    id: label?.id ?? "unknown",
+  };
+}
+
+/**
  * Create a new issue in Linear
  */
 export async function createIssue(opts: {
