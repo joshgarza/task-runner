@@ -2,7 +2,7 @@
 
 import type { LinearDocument } from "@linear/sdk";
 import { getLinearClient } from "./client.ts";
-import { resolveLabels } from "./labels.ts";
+import { resolveLabels, collectAllNodes } from "./labels.ts";
 import { log } from "../logger.ts";
 
 /**
@@ -204,18 +204,24 @@ export async function createLabel(opts: {
     if (!team) throw new Error(`Team not found: ${opts.teamKey}`);
     teamId = team.id;
 
-    const existingLabels = await resolveTeamLabels(opts.teamKey);
-    if (existingLabels.has(opts.name)) {
+    // Check only team-scoped labels (not workspace labels) for duplicates
+    const teamLabelsConn = await team.labels({ first: 250 });
+    const teamLabels = await collectAllNodes(teamLabelsConn);
+    const duplicate = teamLabels.find((l: any) => l.name === opts.name);
+    if (duplicate) {
       throw new Error(`Label "${opts.name}" already exists in team ${opts.teamKey}`);
     }
   } else {
-    // Check workspace-level labels for duplicate
+    // Check workspace-level labels for duplicate (exclude team-scoped labels)
     const wsLabels = await client.issueLabels({
       first: 250,
       filter: { name: { eq: opts.name } },
     });
-    if (wsLabels.nodes.length > 0) {
-      throw new Error(`Label "${opts.name}" already exists at the workspace level`);
+    for (const label of wsLabels.nodes) {
+      const labelTeam = await (label as any).team;
+      if (!labelTeam) {
+        throw new Error(`Label "${opts.name}" already exists at the workspace level`);
+      }
     }
   }
 
