@@ -1,6 +1,7 @@
 // Shared label-resolution utilities with pagination and workspace-label support
 
 import { getLinearClient } from "./client.ts";
+import { setIssueLabels } from "./mutations.ts";
 import { log } from "../logger.ts";
 
 /**
@@ -75,4 +76,75 @@ export async function resolveLabels(
     }
   }
   return labelIds;
+}
+
+/**
+ * Get the current label IDs for an issue (paginated to handle >50 labels)
+ */
+export async function getIssueLabelIds(issueId: string): Promise<string[]> {
+  const client = getLinearClient();
+  const issue = await client.issue(issueId);
+  const labelsConn = await issue.labels({ first: 250 });
+  const allLabels = await collectAllNodes(labelsConn);
+  return allLabels.map((l: any) => l.id);
+}
+
+/**
+ * Pure set-arithmetic: compute label changes without any API calls.
+ * Labels not found in teamLabels are silently skipped.
+ * Returned arrays only contain names that actually changed.
+ */
+export function computeLabelDiff(
+  currentLabelIds: string[],
+  teamLabels: Map<string, string>,
+  addNames: string[],
+  removeNames: string[]
+): { newLabelIds: string[]; labelsAdded: string[]; labelsRemoved: string[] } {
+  const newLabelIds = new Set(currentLabelIds);
+  const labelsAdded: string[] = [];
+  const labelsRemoved: string[] = [];
+
+  for (const name of addNames) {
+    const id = teamLabels.get(name);
+    if (id && !newLabelIds.has(id)) {
+      newLabelIds.add(id);
+      labelsAdded.push(name);
+    }
+  }
+
+  for (const name of removeNames) {
+    const id = teamLabels.get(name);
+    if (id && newLabelIds.has(id)) {
+      newLabelIds.delete(id);
+      labelsRemoved.push(name);
+    }
+  }
+
+  return { newLabelIds: [...newLabelIds], labelsAdded, labelsRemoved };
+}
+
+/**
+ * Fetch current labels, compute diff, and optionally apply.
+ * In dry-run mode the mutation is skipped but the diff is still accurate.
+ */
+export async function applyLabelChanges(
+  issueId: string,
+  teamLabels: Map<string, string>,
+  addNames: string[],
+  removeNames: string[],
+  dryRun: boolean
+): Promise<{ labelsAdded: string[]; labelsRemoved: string[] }> {
+  const currentLabelIds = await getIssueLabelIds(issueId);
+  const { newLabelIds, labelsAdded, labelsRemoved } = computeLabelDiff(
+    currentLabelIds,
+    teamLabels,
+    addNames,
+    removeNames
+  );
+
+  if (!dryRun && (labelsAdded.length > 0 || labelsRemoved.length > 0)) {
+    await setIssueLabels(issueId, newLabelIds);
+  }
+
+  return { labelsAdded, labelsRemoved };
 }
