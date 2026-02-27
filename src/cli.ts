@@ -11,6 +11,7 @@ import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
 import { listTickets } from "./runner/list-tickets.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
+import { prHealth } from "./runner/pr-health.ts";
 import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
 import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
 import { loadConfig, detectProjectFromCwd } from "./config.ts";
@@ -260,6 +261,49 @@ program
       console.log(`\nTotal: ${labeled} labeled, ${blocked} blocked, ${skipped} skipped`);
     } catch (err: any) {
       log("ERROR", "organize", `Failed: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("pr-health")
+  .description("Reconcile Linear issues with GitHub PR status")
+  .option("--team <key>", "Team key (e.g. JOS) — auto-detected from cwd if omitted")
+  .option("--project <name>", "Linear project name to filter by")
+  .option("--dry-run", "Preview changes without applying")
+  .action(async (opts) => {
+    try {
+      const detected = detectProjectFromCwd();
+      const team = opts.team ?? detected?.team;
+
+      if (!team) {
+        log("ERROR", "pr-health", "--team is required (could not auto-detect from cwd)");
+        process.exit(1);
+      }
+
+      const results = await prHealth({
+        team,
+        project: opts.project ?? detected?.project,
+        dryRun: opts.dryRun,
+      });
+
+      // Print summary
+      console.log("\n--- Results ---");
+      for (const r of results) {
+        const icon = r.action === "transitioned-done" ? "[+]"
+          : r.action === "transitioned-todo" ? "[~]"
+          : "[-]";
+        console.log(`${icon} ${r.identifier}: ${r.title}`);
+        console.log(`    PR: ${r.prUrl} (${r.prState})`);
+        console.log(`    ${r.reason}`);
+      }
+
+      const done = results.filter((r) => r.action === "transitioned-done").length;
+      const todo = results.filter((r) => r.action === "transitioned-todo").length;
+      const skipped = results.filter((r) => r.action === "skipped").length;
+      console.log(`\nTotal: ${done} merged, ${todo} closed, ${skipped} skipped`);
+    } catch (err: any) {
+      log("ERROR", "pr-health", `Failed: ${err.message}`);
       process.exit(1);
     }
   });

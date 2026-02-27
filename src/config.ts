@@ -78,6 +78,7 @@ export function loadConfig(): TaskRunnerConfig {
       inProgressState: raw.linear?.inProgressState ?? "In Progress",
       inReviewState: raw.linear?.inReviewState ?? "In Review",
       todoState: raw.linear?.todoState ?? "Todo",
+      doneState: raw.linear?.doneState ?? "Done",
     },
     defaults: {
       model: raw.defaults?.model ?? "opus",
