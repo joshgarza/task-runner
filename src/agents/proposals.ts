@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { log } from "../logger.ts";
 import { addAgentType, loadRegistry, resolveAgentType } from "./registry.ts";
+import * as comments from "../linear/comments.ts";
 import type {
   AgentProposal,
   FailureAnalysis,
@@ -111,25 +112,11 @@ export async function createProposal(opts: {
 
     // Post comment with proposal details
     const { addComment } = await import("../linear/mutations.ts");
-    const comment = [
-      `🤖 **Agent permission escalation needed**`,
-      "",
-      `Agent type \`${baseAgentType}\` failed with missing capabilities:`,
-      ...failureAnalysis.missingCapabilities.map((c) => `- \`${c}\``),
-      "",
-      `**Proposal ID:** \`${proposal.id}\``,
-      "",
-      "To approve:",
-      "```bash",
-      `node --experimental-strip-types src/cli.ts approve-agent ${proposal.id}`,
-      "```",
-      "",
-      "To reject:",
-      "```bash",
-      `node --experimental-strip-types src/cli.ts approve-agent ${proposal.id} --reject --reason "..."`,
-      "```",
-    ].join("\n");
-    await addComment(issue.id, comment);
+    await addComment(issue.id, comments.escalationNeeded({
+      baseAgentType,
+      missingCapabilities: failureAnalysis.missingCapabilities,
+      proposalId: proposal.id,
+    }));
   } catch (err: any) {
     log("WARN", issue.identifier, `Failed to update labels/comment for proposal: ${err.message}`);
   }
@@ -245,10 +232,10 @@ export async function approveProposal(
     }
 
     await setIssueLabels(issue.id, newLabelIds);
-    await addComment(
-      issue.id,
-      `🤖 Proposal \`${id}\` approved. New agent type \`${proposal.proposedAgentType}\` added to registry. Ticket re-queued for processing.`
-    );
+    await addComment(issue.id, comments.proposalApproved({
+      proposalId: id,
+      proposedAgentType: proposal.proposedAgentType,
+    }));
   } catch (err: any) {
     log("WARN", "proposals", `Failed to update labels after approval: ${err.message}`);
   }
@@ -283,10 +270,10 @@ export async function rejectProposal(
     const { addComment } = await import("../linear/mutations.ts");
 
     const issue = await fetchIssue(proposal.issueIdentifier);
-    await addComment(
-      issue.id,
-      `🤖 Proposal \`${id}\` rejected.\n\nReason: ${reason}`
-    );
+    await addComment(issue.id, comments.proposalRejected({
+      proposalId: id,
+      reason,
+    }));
   } catch (err: any) {
     log("WARN", "proposals", `Failed to post rejection comment: ${err.message}`);
   }

@@ -4,6 +4,7 @@ import { loadConfig, getProjectConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { fetchIssuesByTeamAndStates, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, setIssueLabels, addComment } from "../linear/mutations.ts";
+import { codebaseContext as formatContextComment, CONTEXT_SENTINEL } from "../linear/comments.ts";
 import { collectAllNodes, resolveTeamLabels } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
 import { spawnAgent } from "../agents/spawn.ts";
@@ -72,32 +73,6 @@ function gatherContext(issue: LinearIssue, repoPath: string): ContextResult | nu
   }
 }
 
-/**
- * Format context result as a Linear comment body
- */
-function formatContextComment(context: ContextResult): string {
-  const lines: string[] = ["## Codebase Context (auto-generated)", ""];
-
-  lines.push(context.codeContext, "");
-
-  if (context.relevantFiles.length > 0) {
-    lines.push("### Relevant Files", "");
-    for (const file of context.relevantFiles) {
-      lines.push(`- \`${file}\``);
-    }
-    lines.push("");
-  }
-
-  if (context.acceptanceCriteria.length > 0) {
-    lines.push("### Suggested Acceptance Criteria", "");
-    for (const criterion of context.acceptanceCriteria) {
-      lines.push(`- [ ] ${criterion}`);
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
 
 export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<OrganizeTicketResult[]> {
   const config = loadConfig();
@@ -249,7 +224,7 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
         const commentsConn = await fullIssue.comments({ first: 250 });
         const allComments = await collectAllNodes(commentsConn);
         const hasContext = allComments.some((c: any) =>
-          c.body?.startsWith("## Codebase Context (auto-generated)")
+          c.body?.startsWith(CONTEXT_SENTINEL)
         );
 
         if (hasContext) {
