@@ -1,7 +1,7 @@
 // Branch naming, push, PR creation via gh CLI
 
-import { execSync } from "node:child_process";
 import { log } from "../logger.ts";
+import { execGit, execGh, validateBranchName } from "./exec.ts";
 import type { LinearIssue } from "../types.ts";
 
 /**
@@ -9,15 +9,12 @@ import type { LinearIssue } from "../types.ts";
  */
 export function hasCommits(worktreePath: string, defaultBranch: string): boolean {
   try {
-    const result = execSync(
-      `git log "origin/${defaultBranch}..HEAD" --oneline`,
-      {
-        cwd: worktreePath,
-        timeout: 10_000,
-        encoding: "utf-8",
-      }
+    validateBranchName(defaultBranch);
+    const result = execGit(
+      ["log", `origin/${defaultBranch}..HEAD`, "--oneline"],
+      { cwd: worktreePath, timeout: 10_000 }
     );
-    return result.trim().length > 0;
+    return result.length > 0;
   } catch {
     return false;
   }
@@ -27,10 +24,10 @@ export function hasCommits(worktreePath: string, defaultBranch: string): boolean
  * Push the branch to origin (runner does this, not the agent)
  */
 export function pushBranch(worktreePath: string, branch: string, issueId: string): void {
-  execSync(`git push -u origin "${branch}"`, {
+  validateBranchName(branch);
+  execGit(["push", "-u", "origin", branch], {
     cwd: worktreePath,
     timeout: 60_000,
-    encoding: "utf-8",
   });
   log("OK", issueId, `Pushed branch ${branch}`);
 }
@@ -44,6 +41,8 @@ export function createPR(
   labels: string[],
   defaultBranch: string
 ): string {
+  validateBranchName(defaultBranch);
+
   const title = `${issue.identifier}: ${issue.title}`;
   const body = [
     `## Linear Issue`,
@@ -57,17 +56,17 @@ export function createPR(
     .filter(Boolean)
     .join("\n");
 
-  const labelArgs = labels.length > 0 ? `--label "${labels.join(",")}"` : "";
+  const args = [
+    "pr", "create",
+    "--title", title,
+    "--body", body,
+    "--base", defaultBranch,
+  ];
+  if (labels.length > 0) {
+    args.push("--label", labels.join(","));
+  }
 
-  const result = execSync(
-    `gh pr create --title "${escapeShell(title)}" --body "${escapeShell(body)}" --base "${defaultBranch}" ${labelArgs}`,
-    {
-      cwd: worktreePath,
-      timeout: 30_000,
-      encoding: "utf-8",
-    }
-  );
-
+  const result = execGh(args, { cwd: worktreePath, timeout: 30_000 });
   const prUrl = result.trim();
   log("OK", issue.identifier, `Created PR: ${prUrl}`);
   return prUrl;
@@ -77,22 +76,12 @@ export function createPR(
  * Add a label to a PR
  */
 export function addPRLabel(prUrl: string, label: string): void {
-  execSync(`gh pr edit "${prUrl}" --add-label "${label}"`, {
-    timeout: 15_000,
-    encoding: "utf-8",
-  });
+  execGh(["pr", "edit", prUrl, "--add-label", label], { timeout: 15_000 });
 }
 
 /**
  * Add a comment to a PR
  */
 export function addPRComment(prUrl: string, body: string): void {
-  execSync(`gh pr comment "${prUrl}" --body "${escapeShell(body)}"`, {
-    timeout: 15_000,
-    encoding: "utf-8",
-  });
-}
-
-function escapeShell(str: string): string {
-  return str.replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`");
+  execGh(["pr", "comment", prUrl, "--body", body], { timeout: 15_000 });
 }
