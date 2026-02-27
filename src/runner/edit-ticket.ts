@@ -10,6 +10,7 @@ export interface EditTicketOptions {
   priority?: number;
   labels?: string[];
   addLabels?: string[];
+  removeLabels?: string[];
   status?: string;
   assignee?: string;
 }
@@ -31,6 +32,16 @@ export async function editTicket(
     }
     // Merge: existing labels + new labels, deduplicated
     labelNames = [...new Set([...issue.labels, ...opts.addLabels])];
+  }
+
+  // If --remove-labels is used, filter out specified labels
+  if (opts.removeLabels && opts.removeLabels.length > 0) {
+    if (labelNames && !opts.addLabels) {
+      log("WARN", "edit-ticket", "--labels and --remove-labels both specified; --remove-labels takes precedence");
+    }
+    const base = labelNames ?? issue.labels;
+    const removeSet = new Set(opts.removeLabels);
+    labelNames = base.filter(l => !removeSet.has(l));
   }
 
   await updateIssue(issue.id, issue.teamKey, {

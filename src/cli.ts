@@ -165,6 +165,7 @@ program
   })
   .option("--labels <labels...>", "Space-separated labels (replaces existing)")
   .option("--add-labels <labels...>", "Space-separated labels to add (preserves existing)")
+  .option("--remove-labels <labels...>", "Space-separated labels to remove (preserves existing)")
   .option("--status <name>", "Workflow state name")
   .option("--assignee <email>", "Assignee email address")
   .action(async (identifier: string, opts) => {
@@ -175,6 +176,7 @@ program
         priority: opts.priority,
         labels: opts.labels,
         addLabels: opts.addLabels,
+        removeLabels: opts.removeLabels,
         status: opts.status,
         assignee: opts.assignee,
       });
