@@ -93,6 +93,32 @@ export function addPRComment(prUrl: string, body: string): void {
   });
 }
 
+/**
+ * Get commit count and files changed between base branch and HEAD
+ */
+export function getCommitStats(
+  worktreePath: string,
+  defaultBranch: string
+): { commitCount: number; filesChanged: number } {
+  try {
+    const commitOutput = execSync(
+      `git rev-list --count "origin/${defaultBranch}..HEAD"`,
+      { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
+    );
+    const commitCount = parseInt(commitOutput.trim(), 10) || 0;
+
+    const diffOutput = execSync(
+      `git diff --name-only "origin/${defaultBranch}..HEAD"`,
+      { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
+    );
+    const filesChanged = diffOutput.trim().split("\n").filter(Boolean).length;
+
+    return { commitCount, filesChanged };
+  } catch {
+    return { commitCount: 0, filesChanged: 0 };
+  }
+}
+
 function escapeShell(str: string): string {
   return str.replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`");
 }

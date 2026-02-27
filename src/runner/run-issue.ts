@@ -8,7 +8,8 @@ import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, addComment, createChildIssue } from "../linear/mutations.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
-import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment } from "../git/branch.ts";
+import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment, getCommitStats } from "../git/branch.ts";
+import * as comments from "../linear/comments.ts";
 import { spawnAgent } from "../agents/spawn.ts";
 import { loadRegistry } from "../agents/registry.ts";
 import { dispatch } from "../agents/dispatcher.ts";
@@ -105,22 +106,34 @@ export async function runIssue(
     return failure(identifier, err.message, startTime, 0);
   }
 
-  // 4. Transition to In Progress
+  // 4. Dispatch: select agent type from registry based on issue labels
+  const registry = loadRegistry();
+  const dispatchResult = dispatch(issue, registry);
+  log("INFO", identifier, `Dispatch: ${dispatchResult.agentType} (${dispatchResult.reason})`);
+
+  // 5. Transition to In Progress
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
-    await addComment(issue.id, `🤖 Agent starting work (model: ${model}, max-turns: ${maxTurns})`);
+    await addComment(issue.id, comments.startWork({
+      identifier: issue.identifier,
+      title: issue.title,
+      agentType: dispatchResult.agentType,
+      model,
+      maxTurns,
+      maxAttempts,
+    }));
     transitionedToInProgress = true;
     log("INFO", identifier, `Transitioned to "${config.linear.inProgressState}"`);
   } catch (err: any) {
     log("WARN", identifier, `Failed to transition issue: ${err.message}`);
   }
 
-  // 5. Create worktree
+  // 6. Create worktree
   let worktreePath: string;
   try {
     worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch);
   } catch (err: any) {
-    await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`);
+    await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`, 0);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
   }
 
@@ -129,13 +142,8 @@ export async function runIssue(
   let lastError = "";
   let pipelineSucceeded = false;
 
-  // 5.5. Dispatch: select agent type from registry based on issue labels
-  const registry = loadRegistry();
-  const dispatchResult = dispatch(issue, registry);
-  log("INFO", identifier, `Dispatch: ${dispatchResult.agentType} (${dispatchResult.reason})`);
-
   try {
-    // 6. Spawn worker agent (with retry loop)
+    // 7. Spawn worker agent (with retry loop)
     for (attempts = 1; attempts <= maxAttempts; attempts++) {
       log("INFO", identifier, `Attempt ${attempts}/${maxAttempts}`);
 
@@ -226,7 +234,7 @@ export async function runIssue(
         if (attempts >= maxAttempts) {
           await addComment(
             issue.id,
-            `🤖 Agent failed after ${maxAttempts} attempt(s).\n\nErrors:\n${lastError}`
+            comments.agentFailed({ attempts, maxAttempts, errors: lastError })
           );
           return failure(identifier, `Validation failed after ${maxAttempts} attempts: ${lastError}`, startTime, attempts);
         }
@@ -255,7 +263,12 @@ export async function runIssue(
 
     // 11. Link PR to Linear
     try {
-      await addComment(issue.id, `🤖 PR created: ${prUrl}`);
+      const stats = getCommitStats(worktreePath, projectConfig.defaultBranch);
+      await addComment(issue.id, comments.prCreated({
+        prUrl,
+        commitCount: stats.commitCount,
+        filesChanged: stats.filesChanged,
+      }));
     } catch {
       log("WARN", identifier, "Failed to comment PR link on Linear issue");
     }
@@ -277,7 +290,7 @@ export async function runIssue(
             addPRLabel(prUrl, config.github.reviewApprovedLabel);
           }
           await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
-          await addComment(issue.id, `🤖 Review passed: ${verdict.summary}`);
+          await addComment(issue.id, comments.reviewPassed({ verdict, prUrl }));
         } catch (err: any) {
           log("WARN", identifier, `Failed to label/transition after approval: ${err.message}`);
         }
@@ -333,7 +346,7 @@ export async function runIssue(
 
     // 15. Roll back to Todo if pipeline failed after transitioning to In Progress
     if (!pipelineSucceeded && transitionedToInProgress) {
-      await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed");
+      await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed", attempts);
     }
   }
 }
@@ -411,12 +424,13 @@ async function rollbackInProgress(
   issue: any,
   config: any,
   identifier: string,
-  error: string
+  error: string,
+  attempts: number
 ): Promise<void> {
   if (!transitioned || !issue) return;
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
-    await addComment(issue.id, `🤖 Agent failed, moving back to Todo.\n\nError: ${error.slice(0, 500)}`);
+    await addComment(issue.id, comments.rollback({ error, attempts }));
     log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
   } catch (err: any) {
     log("WARN", identifier, `Failed to roll back issue state: ${err.message}`);
