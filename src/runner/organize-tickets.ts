@@ -136,6 +136,44 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
   const results: OrganizeTicketResult[] = [];
 
   for (const issue of issues) {
+    // Reject tickets requiring human approval — never label these agent-ready,
+    // and strip any stale agent-ready or agent:<type> labels that may exist.
+    if (issue.labels.includes(config.linear.needsApprovalLabel)) {
+      const staleAgentLabels = issue.labels.filter(
+        (l) => l === agentLabel || l.startsWith("agent:")
+      );
+      const labelsRemoved: string[] = [];
+
+      if (staleAgentLabels.length > 0 && !dryRun) {
+        const currentLabelIds = await getIssueLabelIds(issue.id);
+        const newLabelIds = new Set(currentLabelIds);
+        for (const name of staleAgentLabels) {
+          const id = teamLabels.get(name);
+          if (id && newLabelIds.has(id)) {
+            newLabelIds.delete(id);
+            labelsRemoved.push(name);
+          }
+        }
+        if (labelsRemoved.length > 0) {
+          await setIssueLabels(issue.id, [...newLabelIds]);
+          log("INFO", issue.identifier, `${prefix}Removed stale labels: ${labelsRemoved.join(", ")}`);
+        }
+      } else if (staleAgentLabels.length > 0 && dryRun) {
+        labelsRemoved.push(...staleAgentLabels.filter((l) => teamLabels.has(l)));
+      }
+
+      log("INFO", issue.identifier, `${prefix}Needs human approval — skipping`);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "blocked",
+        labelsAdded: [],
+        labelsRemoved,
+        reason: "Needs human approval",
+      });
+      continue;
+    }
+
     // Always check blocking relations first — a ticket may have been labeled
     // agent-ready in a previous run but gained blockers since then.
     const allBlockers = await fetchBlockingRelations(issue.id);

@@ -65,6 +65,16 @@ export async function runIssue(
     );
   }
 
+  // 2.3. Reject tickets requiring human approval
+  if (issue.labels.includes(config.linear.needsApprovalLabel)) {
+    return failure(
+      identifier,
+      `Issue has "${config.linear.needsApprovalLabel}" label — requires human approval before agent can proceed`,
+      startTime,
+      0
+    );
+  }
+
   // 2.5. Blocking safety net — re-check blocking relations before committing resources
   try {
     const blockers = await fetchBlockingRelations(issue.id);
