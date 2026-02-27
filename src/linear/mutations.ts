@@ -2,7 +2,7 @@
 
 import type { LinearDocument } from "@linear/sdk";
 import { getLinearClient } from "./client.ts";
-import { resolveLabels } from "./labels.ts";
+import { resolveLabels, collectAllNodes } from "./labels.ts";
 import { log } from "../logger.ts";
 
 /**
@@ -153,6 +153,64 @@ export async function updateIssue(
 export async function setIssueLabels(issueId: string, labelIds: string[]): Promise<void> {
   const client = getLinearClient();
   await client.updateIssue(issueId, { labelIds });
+}
+
+/**
+ * Create a new label in Linear, scoped to a team or workspace-wide.
+ * Pre-checks for duplicate names in the target scope.
+ */
+export async function createLabel(opts: {
+  name: string;
+  teamKey?: string;
+  color?: string;
+  description?: string;
+}): Promise<{ name: string; id: string }> {
+  const client = getLinearClient();
+
+  let teamId: string | undefined;
+
+  if (opts.teamKey) {
+    // Resolve team and check for duplicate name among team labels
+    const teams = await client.teams({ filter: { key: { eq: opts.teamKey } } });
+    const team = teams.nodes[0];
+    if (!team) throw new Error(`Team not found: ${opts.teamKey}`);
+    teamId = team.id;
+
+    // Check only team-scoped labels (not workspace labels) for duplicates
+    const teamLabelsConn = await team.labels({ first: 250 });
+    const teamLabels = await collectAllNodes(teamLabelsConn);
+    const duplicate = teamLabels.find((l: any) => l.name === opts.name);
+    if (duplicate) {
+      throw new Error(`Label "${opts.name}" already exists in team ${opts.teamKey}`);
+    }
+  } else {
+    // Check workspace-level labels for duplicate (exclude team-scoped labels)
+    const wsLabels = await client.issueLabels({
+      first: 250,
+      filter: { name: { eq: opts.name } },
+    });
+    for (const label of wsLabels.nodes) {
+      const labelTeam = await (label as any).team;
+      if (!labelTeam) {
+        throw new Error(`Label "${opts.name}" already exists at the workspace level`);
+      }
+    }
+  }
+
+  const payload: { name: string; teamId?: string; color?: string; description?: string } = {
+    name: opts.name,
+  };
+  if (teamId) payload.teamId = teamId;
+  if (opts.color) payload.color = opts.color;
+  if (opts.description) payload.description = opts.description;
+
+  const result = await client.createIssueLabel(payload);
+  const label = await result.issueLabel;
+
+  return {
+    name: label?.name ?? opts.name,
+    id: label?.id ?? "unknown",
+  };
 }
 
 /**
