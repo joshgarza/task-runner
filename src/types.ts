@@ -9,6 +9,7 @@ export interface ProjectConfig {
   lintCommand: string;
   buildCommand?: string;
   team?: string;
+  branchPrefix?: string;
 }
 
 export interface LinearConfig {
