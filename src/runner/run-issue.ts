@@ -118,13 +118,13 @@ export async function runIssue(
   // 5. Create worktree
   let worktreePath: string;
   try {
-    worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch);
+    worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch, projectConfig.branchPrefix);
   } catch (err: any) {
     await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
   }
 
-  const branch = getBranchName(identifier);
+  const branch = getBranchName(identifier, projectConfig.branchPrefix);
   let attempts = 0;
   let lastError = "";
   let pipelineSucceeded = false;
@@ -326,7 +326,7 @@ export async function runIssue(
   } finally {
     // 14. Clean up worktree (delete remote branch only on failure)
     try {
-      removeWorktree(projectConfig.repoPath, identifier, !pipelineSucceeded);
+      removeWorktree(projectConfig.repoPath, identifier, !pipelineSucceeded, projectConfig.branchPrefix);
     } catch (err: any) {
       log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
     }
