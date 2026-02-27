@@ -159,7 +159,7 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
           log("INFO", issue.identifier, `${prefix}Removed stale labels: ${labelsRemoved.join(", ")}`);
         }
       } else if (staleAgentLabels.length > 0 && dryRun) {
-        labelsRemoved.push(...staleAgentLabels.filter((l) => teamLabels.has(l) || l.startsWith("agent:")));
+        labelsRemoved.push(...staleAgentLabels.filter((l) => teamLabels.has(l)));
       }
 
       log("INFO", issue.identifier, `${prefix}Needs human approval — skipping`);
