@@ -9,6 +9,7 @@ import { reviewPR } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
+import { linkTickets } from "./runner/link-tickets.ts";
 import { listTickets } from "./runner/list-tickets.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
 import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
@@ -182,6 +183,20 @@ program
       if (result.url) console.log(`URL: ${result.url}`);
     } catch (err: any) {
       log("ERROR", "edit-ticket", `Failed to update issue: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("link-tickets <issueA> <issueB>")
+  .description("Create a relation between two Linear issues (default: issueA blocks issueB)")
+  .option("--type <type>", "Relation type: blocks, duplicate, related", "blocks")
+  .action(async (issueA: string, issueB: string, opts) => {
+    try {
+      await linkTickets(issueA, issueB, opts.type);
+      console.log(`\nLinked: ${issueA} ${opts.type} ${issueB}`);
+    } catch (err: any) {
+      log("ERROR", "link-tickets", `Failed to link issues: ${err.message}`);
       process.exit(1);
     }
   });
