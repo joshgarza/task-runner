@@ -10,6 +10,7 @@ import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
 import { linkTickets } from "./runner/link-tickets.ts";
+import { createLabel } from "./runner/create-label.ts";
 import { listTickets } from "./runner/list-tickets.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
 import { prHealth } from "./runner/pr-health.ts";
@@ -203,6 +204,29 @@ program
       console.log(`\nLinked: ${issueA} ${opts.type} ${issueB}`);
     } catch (err: any) {
       log("ERROR", "link-tickets", `Failed to link issues: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("create-label <name>")
+  .description("Create a new label in Linear")
+  .option("--team <key>", "Team key (e.g. JOS) — auto-detected from cwd if omitted")
+  .option("--color <hex>", "Label color as hex (e.g. #ff0000)")
+  .option("--description <text>", "Label description")
+  .action(async (name: string, opts) => {
+    try {
+      const detected = detectProjectFromCwd();
+      const team = opts.team ?? detected?.team;
+
+      const result = await createLabel(name, {
+        team,
+        color: opts.color,
+        description: opts.description,
+      });
+      console.log(`\nCreated label: ${result.name} (${result.id})`);
+    } catch (err: any) {
+      log("ERROR", "create-label", `Failed to create label: ${err.message}`);
       process.exit(1);
     }
   });
