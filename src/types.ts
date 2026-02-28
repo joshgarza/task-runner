@@ -214,6 +214,30 @@ export interface AgentProposal {
   resolvedAt?: string;
 }
 
+// --- Refine Tickets ---
+
+export interface RefineTicketsOptions {
+  team: string;
+  project?: string;
+  dryRun?: boolean;
+}
+
+export interface RefineTicketResult {
+  identifier: string;
+  title: string;
+  action: "refined" | "skipped" | "failed";
+  agentType?: string;
+  dependenciesAdded?: string[];
+  reason: string;
+}
+
+export interface RefineAgentOutput {
+  agentType: string;
+  descriptionAddendum: string;
+  dependencies: string[];
+  relevantFiles: string[];
+}
+
 // --- Logger ---
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "OK";
