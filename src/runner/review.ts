@@ -1,6 +1,5 @@
 // Standalone PR review (no full pipeline)
 
-import { execSync } from "node:child_process";
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { spawnAgent } from "../agents/spawn.ts";

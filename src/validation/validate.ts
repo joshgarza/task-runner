@@ -1,6 +1,6 @@
 // Post-agent checks: commits exist, tests pass, lint clean
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { log } from "../logger.ts";
 import type { ValidationResult, ProjectConfig } from "../types.ts";
 
@@ -22,15 +22,18 @@ export function validateAgentOutput(
 
   // 1. Check for new commits
   try {
-    const commits = execSync(
-      `git log "origin/${defaultBranch}..HEAD" --oneline`,
+    const result = spawnSync(
+      "git",
+      ["log", `origin/${defaultBranch}..HEAD`, "--oneline"],
       { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
-    ).trim();
+    );
 
-    if (!commits) {
+    if (result.status !== 0) {
+      errors.push(`Failed to check commits: ${result.stderr?.slice(0, 200)}`);
+    } else if (!result.stdout.trim()) {
       errors.push("No new commits found. Agent did not commit any changes.");
     } else {
-      const commitCount = commits.split("\n").length;
+      const commitCount = result.stdout.trim().split("\n").length;
       log("INFO", issueId, `Found ${commitCount} new commit(s)`);
     }
   } catch (err: any) {
@@ -38,46 +41,53 @@ export function validateAgentOutput(
   }
 
   // 2. Run tests
-  try {
-    execSync(teamConfig.testCommand, {
+  {
+    const [cmd, ...args] = teamConfig.testCommand.split(/\s+/);
+    const result = spawnSync(cmd, args, {
       cwd: worktreePath,
       timeout: 120_000, // 2 minutes for tests
       encoding: "utf-8",
       stdio: "pipe",
     });
-    log("OK", issueId, "Tests passed");
-  } catch (err: any) {
-    const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
-    errors.push(`Tests failed: ${output}`);
+    if (result.status !== 0) {
+      const output = result.stdout?.slice(0, 500) || result.stderr?.slice(0, 500) || "";
+      errors.push(`Tests failed: ${output}`);
+    } else {
+      log("OK", issueId, "Tests passed");
+    }
   }
 
   // 3. Run linter
-  try {
-    execSync(teamConfig.lintCommand, {
+  {
+    const [cmd, ...args] = teamConfig.lintCommand.split(/\s+/);
+    const result = spawnSync(cmd, args, {
       cwd: worktreePath,
       timeout: 60_000,
       encoding: "utf-8",
       stdio: "pipe",
     });
-    log("OK", issueId, "Lint passed");
-  } catch (err: any) {
-    const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
-    warnings.push(`Lint issues: ${output}`);
+    if (result.status !== 0) {
+      const output = result.stdout?.slice(0, 500) || result.stderr?.slice(0, 500) || "";
+      warnings.push(`Lint issues: ${output}`);
+    } else {
+      log("OK", issueId, "Lint passed");
+    }
   }
 
   // 4. Run build/type check (if configured)
   if (teamConfig.buildCommand) {
-    try {
-      execSync(teamConfig.buildCommand, {
-        cwd: worktreePath,
-        timeout: 120_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      log("OK", issueId, "Build/tsc passed");
-    } catch (err: any) {
-      const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
+    const [cmd, ...args] = teamConfig.buildCommand.split(/\s+/);
+    const result = spawnSync(cmd, args, {
+      cwd: worktreePath,
+      timeout: 120_000,
+      encoding: "utf-8",
+      stdio: "pipe",
+    });
+    if (result.status !== 0) {
+      const output = result.stdout?.slice(0, 500) || result.stderr?.slice(0, 500) || "";
       errors.push(`Build failed: ${output}`);
+    } else {
+      log("OK", issueId, "Build/tsc passed");
     }
   }
 

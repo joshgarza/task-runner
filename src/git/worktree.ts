@@ -1,6 +1,6 @@
 // Create/remove worktrees in target repo
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "../logger.ts";
@@ -52,21 +52,28 @@ export function createWorktree(
   }
 
   // Fetch latest from remote
-  execSync("git fetch origin", {
+  const fetchResult = spawnSync("git", ["fetch", "origin"], {
     cwd: gitDir,
     timeout: 30_000,
     encoding: "utf-8",
   });
+  if (fetchResult.status !== 0) {
+    throw new Error(`git fetch failed: ${fetchResult.stderr}`);
+  }
 
   // Create worktree with new branch from origin/defaultBranch
-  execSync(
-    `git worktree add -b "${branch}" "${worktreePath}" "origin/${defaultBranch}"`,
+  const addResult = spawnSync(
+    "git",
+    ["worktree", "add", "-b", branch, worktreePath, `origin/${defaultBranch}`],
     {
       cwd: gitDir,
       timeout: 30_000,
       encoding: "utf-8",
     }
   );
+  if (addResult.status !== 0) {
+    throw new Error(`git worktree add failed: ${addResult.stderr}`);
+  }
 
   log("INFO", issueId, `Created worktree at ${worktreePath} (branch: ${branch})`);
   return worktreePath;
@@ -81,36 +88,27 @@ export function removeWorktree(repoPath: string, issueId: string, deleteRemote =
   const branch = getBranchName(issueId);
   const gitDir = resolveGitDir(repoPath);
 
-  try {
-    execSync(`git worktree remove "${worktreePath}" --force`, {
+  // May already be removed
+  spawnSync("git", ["worktree", "remove", worktreePath, "--force"], {
+    cwd: gitDir,
+    timeout: 15_000,
+    encoding: "utf-8",
+  });
+
+  // Branch may not exist
+  spawnSync("git", ["branch", "-D", branch], {
+    cwd: gitDir,
+    timeout: 10_000,
+    encoding: "utf-8",
+  });
+
+  if (deleteRemote) {
+    // Remote branch may not exist
+    spawnSync("git", ["push", "origin", "--delete", branch], {
       cwd: gitDir,
       timeout: 15_000,
       encoding: "utf-8",
     });
-  } catch {
-    // May already be removed
-  }
-
-  try {
-    execSync(`git branch -D "${branch}"`, {
-      cwd: gitDir,
-      timeout: 10_000,
-      encoding: "utf-8",
-    });
-  } catch {
-    // Branch may not exist
-  }
-
-  if (deleteRemote) {
-    try {
-      execSync(`git push origin --delete "${branch}"`, {
-        cwd: gitDir,
-        timeout: 15_000,
-        encoding: "utf-8",
-      });
-    } catch {
-      // Remote branch may not exist
-    }
   }
 
   log("INFO", issueId, "Cleaned up worktree and branch");
