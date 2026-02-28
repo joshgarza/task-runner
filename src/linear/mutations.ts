@@ -156,6 +156,22 @@ export async function setIssueLabels(issueId: string, labelIds: string[]): Promi
 }
 
 /**
+ * Create a blocking relation between two issues.
+ * Sets blockerIdentifier as blocking blockedIdentifier.
+ */
+export async function createBlockingRelation(
+  blockedIssueId: string,
+  blockerIssueId: string
+): Promise<void> {
+  const client = getLinearClient();
+  await client.createIssueRelation({
+    issueId: blockedIssueId,
+    relatedIssueId: blockerIssueId,
+    type: "blocked_by" as LinearDocument.IssueRelationType,
+  });
+}
+
+/**
  * Create a new issue in Linear
  */
 export async function createIssue(opts: {
