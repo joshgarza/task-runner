@@ -1,6 +1,6 @@
 // Branch naming, push, PR creation via gh CLI
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { log } from "../logger.ts";
 import type { LinearIssue } from "../types.ts";
 
@@ -9,15 +9,17 @@ import type { LinearIssue } from "../types.ts";
  */
 export function hasCommits(worktreePath: string, defaultBranch: string): boolean {
   try {
-    const result = execSync(
-      `git log "origin/${defaultBranch}..HEAD" --oneline`,
+    const result = spawnSync(
+      "git",
+      ["log", `origin/${defaultBranch}..HEAD`, "--oneline"],
       {
         cwd: worktreePath,
         timeout: 10_000,
         encoding: "utf-8",
       }
     );
-    return result.trim().length > 0;
+    if (result.status !== 0) return false;
+    return result.stdout.trim().length > 0;
   } catch {
     return false;
   }
@@ -27,11 +29,14 @@ export function hasCommits(worktreePath: string, defaultBranch: string): boolean
  * Push the branch to origin (runner does this, not the agent)
  */
 export function pushBranch(worktreePath: string, branch: string, issueId: string): void {
-  execSync(`git push -u origin "${branch}"`, {
+  const result = spawnSync("git", ["push", "-u", "origin", branch], {
     cwd: worktreePath,
     timeout: 60_000,
     encoding: "utf-8",
   });
+  if (result.status !== 0) {
+    throw new Error(`git push failed: ${result.stderr}`);
+  }
   log("OK", issueId, `Pushed branch ${branch}`);
 }
 
@@ -57,18 +62,22 @@ export function createPR(
     .filter(Boolean)
     .join("\n");
 
-  const labelArgs = labels.length > 0 ? `--label "${labels.join(",")}"` : "";
+  const args = ["pr", "create", "--title", title, "--body", body, "--base", defaultBranch];
+  for (const label of labels) {
+    args.push("--label", label);
+  }
 
-  const result = execSync(
-    `gh pr create --title "${escapeShell(title)}" --body "${escapeShell(body)}" --base "${defaultBranch}" ${labelArgs}`,
-    {
-      cwd: worktreePath,
-      timeout: 30_000,
-      encoding: "utf-8",
-    }
-  );
+  const result = spawnSync("gh", args, {
+    cwd: worktreePath,
+    timeout: 30_000,
+    encoding: "utf-8",
+  });
 
-  const prUrl = result.trim();
+  if (result.status !== 0) {
+    throw new Error(`gh pr create failed: ${result.stderr}`);
+  }
+
+  const prUrl = result.stdout.trim();
   log("OK", issue.identifier, `Created PR: ${prUrl}`);
   return prUrl;
 }
@@ -77,22 +86,24 @@ export function createPR(
  * Add a label to a PR
  */
 export function addPRLabel(prUrl: string, label: string): void {
-  execSync(`gh pr edit "${prUrl}" --add-label "${label}"`, {
+  const result = spawnSync("gh", ["pr", "edit", prUrl, "--add-label", label], {
     timeout: 15_000,
     encoding: "utf-8",
   });
+  if (result.status !== 0) {
+    throw new Error(`gh pr edit failed: ${result.stderr}`);
+  }
 }
 
 /**
  * Add a comment to a PR
  */
 export function addPRComment(prUrl: string, body: string): void {
-  execSync(`gh pr comment "${prUrl}" --body "${escapeShell(body)}"`, {
+  const result = spawnSync("gh", ["pr", "comment", prUrl, "--body", body], {
     timeout: 15_000,
     encoding: "utf-8",
   });
-}
-
-function escapeShell(str: string): string {
-  return str.replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`");
+  if (result.status !== 0) {
+    throw new Error(`gh pr comment failed: ${result.stderr}`);
+  }
 }
