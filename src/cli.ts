@@ -167,6 +167,7 @@ program
   .option("--add-labels <labels...>", "Space-separated labels to add (preserves existing)")
   .option("--status <name>", "Workflow state name")
   .option("--assignee <email>", "Assignee email address")
+  .option("--comment <text>", "Add a comment to the issue")
   .action(async (identifier: string, opts) => {
     try {
       const result = await editTicket(identifier, {
@@ -177,6 +178,7 @@ program
         addLabels: opts.addLabels,
         status: opts.status,
         assignee: opts.assignee,
+        comment: opts.comment,
       });
       console.log(`\nUpdated: ${result.identifier}`);
       if (result.url) console.log(`URL: ${result.url}`);
