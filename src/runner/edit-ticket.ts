@@ -22,6 +22,11 @@ export async function editTicket(
 ): Promise<{ identifier: string; url: string }> {
   log("INFO", "edit-ticket", `Updating issue: ${identifier}`);
 
+  const hasFieldUpdates = opts.title || opts.description || opts.priority !== undefined || opts.labels || opts.addLabels || opts.removeLabels || opts.status || opts.assignee;
+  if (!hasFieldUpdates && !opts.comment) {
+    throw new Error("No fields to update");
+  }
+
   // Fetch the issue to get its ID and team key
   const issue = await fetchIssue(identifier);
 
@@ -45,8 +50,8 @@ export async function editTicket(
     labelNames = base.filter(l => !removeSet.has(l));
   }
 
-  const hasFieldUpdates = opts.title || opts.description || opts.priority !== undefined || labelNames || opts.status || opts.assignee;
-  if (hasFieldUpdates) {
+  const needsIssueUpdate = opts.title || opts.description || opts.priority !== undefined || labelNames || opts.status || opts.assignee;
+  if (needsIssueUpdate) {
     await updateIssue(issue.id, issue.teamKey, {
       title: opts.title,
       description: opts.description,
