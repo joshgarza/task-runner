@@ -1,7 +1,7 @@
 // Update an existing Linear issue from CLI arguments
 
 import { fetchIssue } from "../linear/queries.ts";
-import { updateIssue } from "../linear/mutations.ts";
+import { updateIssue, addComment } from "../linear/mutations.ts";
 import { log } from "../logger.ts";
 
 export interface EditTicketOptions {
@@ -12,6 +12,7 @@ export interface EditTicketOptions {
   addLabels?: string[];
   status?: string;
   assignee?: string;
+  comment?: string;
 }
 
 export async function editTicket(
@@ -19,6 +20,11 @@ export async function editTicket(
   opts: EditTicketOptions
 ): Promise<{ identifier: string; url: string }> {
   log("INFO", "edit-ticket", `Updating issue: ${identifier}`);
+
+  const hasFieldUpdates = opts.title || opts.description || opts.priority !== undefined || opts.labels || opts.addLabels || opts.status || opts.assignee;
+  if (!hasFieldUpdates && !opts.comment) {
+    throw new Error("No fields to update");
+  }
 
   // Fetch the issue to get its ID and team key
   const issue = await fetchIssue(identifier);
@@ -33,14 +39,21 @@ export async function editTicket(
     labelNames = [...new Set([...issue.labels, ...opts.addLabels])];
   }
 
-  await updateIssue(issue.id, issue.teamKey, {
-    title: opts.title,
-    description: opts.description,
-    priority: opts.priority,
-    labelNames,
-    stateName: opts.status,
-    assigneeEmail: opts.assignee,
-  });
+  const needsIssueUpdate = opts.title || opts.description || opts.priority !== undefined || labelNames || opts.status || opts.assignee;
+  if (needsIssueUpdate) {
+    await updateIssue(issue.id, issue.teamKey, {
+      title: opts.title,
+      description: opts.description,
+      priority: opts.priority,
+      labelNames,
+      stateName: opts.status,
+      assigneeEmail: opts.assignee,
+    });
+  }
+
+  if (opts.comment) {
+    await addComment(issue.id, opts.comment);
+  }
 
   log("OK", "edit-ticket", `Updated ${issue.identifier}: ${issue.url}`);
   return { identifier: issue.identifier, url: issue.url };
