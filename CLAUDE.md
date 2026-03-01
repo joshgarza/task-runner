@@ -108,10 +108,11 @@ task-runner run JOS-47 --dry-run    # Fetch and validate without spawning agents
 ```
 
 ### `drain`
-Drain all agent-ready issues sequentially.
+Drain all agent-ready issues with configurable concurrency.
 ```bash
 task-runner drain
-task-runner drain --project my-project --limit 5
+task-runner drain --project my-project --limit 5 --concurrency 3
+task-runner drain --dry-run    # List agent-ready issues without processing
 ```
 
 ### `review <pr-url>`
@@ -132,6 +133,50 @@ Create a new Linear issue.
 ```bash
 task-runner add-ticket "Fix login bug" --team JOS
 task-runner add-ticket "Add search" --team JOS --description "Full-text search" --priority 2 --project my-project
+```
+
+### `edit-ticket <identifier>`
+Update an existing Linear issue.
+```bash
+task-runner edit-ticket JOS-47 --status "In Progress"
+task-runner edit-ticket JOS-47 --add-labels agent-ready --comment "Ready for agent processing"
+task-runner edit-ticket JOS-47 --title "New title" --priority 2 --assignee user@example.com
+```
+
+### `list-tickets`
+List Linear issues with filtering.
+```bash
+task-runner list-tickets --team JOS
+task-runner list-tickets --team JOS --status Todo Backlog --project my-project --labels agent-ready
+task-runner list-tickets --team JOS --comments    # Include comment bodies
+```
+
+### `organize-tickets`
+Triage Linear tickets: detect blocked/unblocked issues, apply labels, optionally gather codebase context via LLM.
+```bash
+task-runner organize-tickets --team JOS --project my-project
+task-runner organize-tickets --team JOS --context --dry-run
+```
+
+### `list-agents`
+Show all registered agent types from the RBAC registry.
+```bash
+task-runner list-agents
+task-runner list-agents --verbose    # Show full tool lists
+```
+
+### `pending-proposals`
+List agent type proposals awaiting human approval.
+```bash
+task-runner pending-proposals
+task-runner pending-proposals --all    # Include resolved proposals
+```
+
+### `approve-agent <id>`
+Approve or reject an agent type proposal.
+```bash
+task-runner approve-agent <proposal-id>
+task-runner approve-agent <proposal-id> --reject --reason "Too broad tool access"
 ```
 
 ## Architecture
@@ -159,16 +204,29 @@ src/
   types.ts            # All TypeScript interfaces
   logger.ts           # Structured logging
   lock.ts             # File-based lock for drain
+  concurrency.ts      # Shared runWithConcurrency helper
   runner/
     run-issue.ts      # Full pipeline for a single issue
-    drain.ts          # Sequential issue processing
+    drain.ts          # Concurrent issue processing
     review.ts         # Standalone PR review
     standup.ts        # Linear activity digest
     add-ticket.ts     # Linear issue creation
+    edit-ticket.ts    # Linear issue updates + comments
+    list-tickets.ts   # Linear issue listing with filters
+    organize-tickets.ts # Triage: label blocked/unblocked, gather context
   agents/
     spawn.ts          # Claude CLI spawning with tool whitelists
+    registry.ts       # RBAC agent type registry (load, resolve, validate)
+    dispatcher.ts     # Dispatches issues to agents by type
+    failure-analysis.ts # Analyzes agent failures, proposes new types
+    proposals.ts      # Agent type proposal CRUD (approve/reject)
     worker-prompt.ts  # System prompt for worker agents
     review-prompt.ts  # System prompt for review agents
+    context-prompt.ts # System prompt for context-gathering agents
+    agent-registry.json   # Agent type definitions
+    worker-tools.json     # Tool whitelist for worker agents
+    review-tools.json     # Tool whitelist for review agents
+    context-tools.json    # Tool whitelist for context agents
   git/
     branch.ts         # Branch creation, push, PR creation
     worktree.ts       # Worktree create/remove for target repos
@@ -176,6 +234,7 @@ src/
     client.ts         # Linear SDK client
     queries.ts        # Linear read operations
     mutations.ts      # Linear write operations
+    labels.ts         # Label resolution (team + workspace)
   validation/
     validate.ts       # Output validation (commits, tests, lint)
 ```
@@ -188,8 +247,9 @@ src/
 
 ### Design Decisions
 - **Runner pushes, not agents.** Agents commit locally; the runner handles `git push` and `gh pr create`. This prevents agents from pushing broken code.
-- **Sequential processing.** The drain command processes one ticket at a time with a lock file to prevent concurrent runs.
-- **No dependency resolution.** The runner trusts that `agent-ready` tickets are actually ready. Only label a ticket when its dependencies are satisfied.
+- **Concurrent drain with lock.** The drain command runs multiple agents in parallel (configurable `--concurrency`). A lock file prevents overlapping drain invocations.
+- **Dependency-aware prioritization.** `organize-tickets` detects blocked issues via Linear relations and strips `agent-ready` labels from blocked tickets. Drain processes unblocked issues first.
+- **RBAC agent registry.** Agent types are defined in `agent-registry.json` with scoped tool whitelists. The dispatcher selects agent types per-issue. New types are proposed by failure analysis and require human approval.
 - **Project-scoped config.** Each Linear project maps to a repo, so one Linear workspace can drive multiple repos.
 
 ## Config Format
