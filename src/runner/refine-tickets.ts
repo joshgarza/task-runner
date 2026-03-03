@@ -25,6 +25,45 @@ function isAlreadyRefined(description: string | null): boolean {
 }
 
 /**
+ * Extract a balanced JSON object starting at the given index using brace counting.
+ * Returns the substring from `start` to the matching `}`, or null if unbalanced.
+ */
+function extractBalancedJson(text: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      if (inString) escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse the exploration agent's JSON output into a structured result.
  */
 function parseRefineOutput(raw: string, issueId: string): RefineAgentOutput | null {
@@ -37,18 +76,31 @@ function parseRefineOutput(raw: string, issueId: string): RefineAgentOutput | nu
     // Use raw output
   }
 
-  const jsonMatch = text.match(/\{[\s\S]*"agentType"[\s\S]*\}/);
-  if (!jsonMatch) {
-    log("WARN", issueId, "No structured output found in refine agent response");
-    return null;
+  // Find JSON objects using brace-balanced extraction, try each until one parses
+  // with the expected "agentType" field
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const braceIdx = text.indexOf("{", searchFrom);
+    if (braceIdx === -1) break;
+
+    const candidate = extractBalancedJson(text, braceIdx);
+    if (!candidate) {
+      searchFrom = braceIdx + 1;
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(candidate) as RefineAgentOutput;
+      if (parsed.agentType) return parsed;
+    } catch {
+      // Not valid JSON, try next brace
+    }
+
+    searchFrom = braceIdx + 1;
   }
 
-  try {
-    return JSON.parse(jsonMatch[0]) as RefineAgentOutput;
-  } catch {
-    log("WARN", issueId, "Failed to parse refine agent JSON output");
-    return null;
-  }
+  log("WARN", issueId, "No structured output found in refine agent response");
+  return null;
 }
 
 /**
