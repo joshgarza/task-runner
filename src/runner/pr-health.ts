@@ -1,6 +1,6 @@
 // Reconcile Linear issues with GitHub PR status
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { fetchFilteredIssues } from "../linear/queries.ts";
@@ -24,7 +24,7 @@ export interface PrHealthResult {
   reason: string;
 }
 
-const PR_URL_REGEX = /https:\/\/github\.com\/[^\s]+\/pull\/\d+/;
+const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
 
 /**
  * Extract PR URLs from Linear issue comments.
@@ -45,15 +45,22 @@ function extractPrUrls(comments: string[]): string[] {
  * Check PR state via gh CLI. Returns "MERGED", "CLOSED", or "OPEN".
  */
 function getPrState(prUrl: string): string | null {
+  const result = spawnSync("gh", ["pr", "view", prUrl, "--json", "state"], {
+    timeout: 15_000,
+    encoding: "utf-8",
+  });
+
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? "").trim();
+    log("WARN", "pr-health", `Failed to check PR state for ${prUrl}: ${stderr}`);
+    return null;
+  }
+
   try {
-    const result = execSync(`gh pr view "${prUrl}" --json state`, {
-      timeout: 15_000,
-      encoding: "utf-8",
-    });
-    const parsed = JSON.parse(result.trim());
+    const parsed = JSON.parse(result.stdout.trim());
     return parsed.state ?? null;
-  } catch (err: any) {
-    log("WARN", "pr-health", `Failed to check PR state for ${prUrl}: ${err.message}`);
+  } catch {
+    log("WARN", "pr-health", `Failed to parse PR state JSON for ${prUrl}`);
     return null;
   }
 }
