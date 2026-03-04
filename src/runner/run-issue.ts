@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
-import { transitionIssue, addComment, createChildIssue } from "../linear/mutations.ts";
+import { transitionIssue, addComment, createChildIssue, updateIssue } from "../linear/mutations.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment } from "../git/branch.ts";
@@ -253,12 +253,8 @@ export async function runIssue(
       return failure(identifier, `PR creation failed: ${err.message}`, startTime, attempts);
     }
 
-    // 11. Link PR to Linear
-    try {
-      await addComment(issue.id, `🤖 PR created: ${prUrl}`);
-    } catch {
-      log("WARN", identifier, "Failed to comment PR link on Linear issue");
-    }
+    // 11. Link PR to Linear (retry + fallback to ensure PR URL is always persisted)
+    await postPRLink(issue.id, issue.teamKey, prUrl, issue.description, identifier);
 
     // 12. Spawn review agent
     let verdict: ReviewVerdict | undefined;
@@ -420,6 +416,45 @@ async function rollbackInProgress(
     log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
   } catch (err: any) {
     log("WARN", identifier, `Failed to roll back issue state: ${err.message}`);
+  }
+}
+
+/**
+ * Post the PR URL to a Linear issue via comment, with retry and fallback.
+ * Tries addComment twice (with a 1s delay between attempts). If both fail,
+ * falls back to appending the PR URL to the issue description via updateIssue.
+ * Never throws — the pipeline must not fail because of a comment failure.
+ */
+export async function postPRLink(
+  issueId: string,
+  teamKey: string,
+  prUrl: string,
+  existingDescription: string | null,
+  context: string
+): Promise<void> {
+  const maxRetries = 2;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await addComment(issueId, `🤖 PR created: ${prUrl}`);
+      return; // success
+    } catch (err: any) {
+      log("WARN", context, `addComment attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }
+
+  // Fallback: append PR URL to issue description
+  try {
+    const desc = existingDescription ?? "";
+    await updateIssue(issueId, teamKey, {
+      description: desc + `\n\nPR: ${prUrl}`,
+    });
+    log("INFO", context, "Persisted PR URL via issue description fallback");
+  } catch (err: any) {
+    log("WARN", context, `Failed to persist PR URL via description fallback: ${err.message}`);
   }
 }
 
