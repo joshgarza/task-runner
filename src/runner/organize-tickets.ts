@@ -3,23 +3,12 @@
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { fetchIssuesByTeamAndStates, fetchBlockingRelations } from "../linear/queries.ts";
-import { transitionIssue, setIssueLabels, addComment } from "../linear/mutations.ts";
-import { collectAllNodes, resolveTeamLabels } from "../linear/labels.ts";
+import { transitionIssue, addComment } from "../linear/mutations.ts";
+import { collectAllNodes, resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
 import { spawnAgent } from "../agents/spawn.ts";
 import { buildContextPrompt } from "../agents/context-prompt.ts";
 import type { OrganizeTicketsOptions, OrganizeTicketResult, ContextResult, LinearIssue } from "../types.ts";
-
-/**
- * Get the current label IDs for an issue (paginated to handle >50 labels)
- */
-async function getIssueLabelIds(issueId: string): Promise<string[]> {
-  const client = getLinearClient();
-  const issue = await client.issue(issueId);
-  const labelsConn = await issue.labels({ first: 250 });
-  const allLabels = await collectAllNodes(labelsConn);
-  return allLabels.map((l: any) => l.id);
-}
 
 /**
  * Spawn a headless Claude instance to gather codebase context for a ticket.
@@ -142,24 +131,14 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
       const staleAgentLabels = issue.labels.filter(
         (l) => l === agentLabel || l.startsWith("agent:")
       );
-      const labelsRemoved: string[] = [];
+      let labelsRemoved: string[] = [];
 
-      if (staleAgentLabels.length > 0 && !dryRun) {
-        const currentLabelIds = await getIssueLabelIds(issue.id);
-        const newLabelIds = new Set(currentLabelIds);
-        for (const name of staleAgentLabels) {
-          const id = teamLabels.get(name);
-          if (id && newLabelIds.has(id)) {
-            newLabelIds.delete(id);
-            labelsRemoved.push(name);
-          }
-        }
+      if (staleAgentLabels.length > 0) {
+        const result = await applyLabelChanges(issue.id, teamLabels, [], staleAgentLabels, dryRun);
+        labelsRemoved = result.labelsRemoved;
         if (labelsRemoved.length > 0) {
-          await setIssueLabels(issue.id, [...newLabelIds]);
           log("INFO", issue.identifier, `${prefix}Removed stale labels: ${labelsRemoved.join(", ")}`);
         }
-      } else if (staleAgentLabels.length > 0 && dryRun) {
-        labelsRemoved.push(...staleAgentLabels.filter((l) => teamLabels.has(l)));
       }
 
       log("INFO", issue.identifier, `${prefix}Needs human approval — skipping`);
@@ -184,28 +163,14 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
 
       // Strip addLabels (e.g. agent-ready) from blocked tickets to prevent
       // drain from picking them up and immediately failing.
-      const labelsRemoved: string[] = [];
       const hasAnyAddLabel = addLabels.some((l) => issue.labels.includes(l));
+      let labelsRemoved: string[] = [];
 
-      if (hasAnyAddLabel && !dryRun) {
-        const currentLabelIds = await getIssueLabelIds(issue.id);
-        const newLabelIds = new Set(currentLabelIds);
-
-        for (const name of addLabels) {
-          const id = teamLabels.get(name);
-          if (id && newLabelIds.has(id)) {
-            newLabelIds.delete(id);
-            labelsRemoved.push(name);
-          }
-        }
-
+      if (hasAnyAddLabel) {
+        const result = await applyLabelChanges(issue.id, teamLabels, [], addLabels, dryRun);
+        labelsRemoved = result.labelsRemoved;
         if (labelsRemoved.length > 0) {
-          await setIssueLabels(issue.id, [...newLabelIds]);
           log("INFO", issue.identifier, `${prefix}Removed stale labels: ${labelsRemoved.join(", ")}`);
-        }
-      } else if (hasAnyAddLabel && dryRun) {
-        for (const name of addLabels) {
-          if (issue.labels.includes(name)) labelsRemoved.push(name);
         }
       }
 
@@ -269,46 +234,13 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
     }
 
     // Apply label changes
-    const labelsAdded: string[] = [];
-    const labelsRemoved: string[] = [];
-
-    if (!dryRun) {
-      const currentLabelIds = await getIssueLabelIds(issue.id);
-      const newLabelIds = new Set(currentLabelIds);
-
-      for (const name of addLabels) {
-        const id = teamLabels.get(name);
-        if (id && !newLabelIds.has(id)) {
-          newLabelIds.add(id);
-          labelsAdded.push(name);
-        }
-      }
-
-      for (const name of removeLabels) {
-        const id = teamLabels.get(name);
-        if (id && newLabelIds.has(id)) {
-          newLabelIds.delete(id);
-          labelsRemoved.push(name);
-        }
-      }
-
-      if (labelsAdded.length > 0 || labelsRemoved.length > 0) {
-        await setIssueLabels(issue.id, [...newLabelIds]);
-      }
-    } else {
-      // Dry run — compute what would change
-      for (const name of addLabels) {
-        if (!issue.labels.includes(name) && teamLabels.has(name)) {
-          labelsAdded.push(name);
-        }
-      }
-
-      for (const name of removeLabels) {
-        if (issue.labels.includes(name) && teamLabels.has(name)) {
-          labelsRemoved.push(name);
-        }
-      }
-    }
+    const { labelsAdded, labelsRemoved } = await applyLabelChanges(
+      issue.id,
+      teamLabels,
+      addLabels,
+      removeLabels,
+      dryRun
+    );
 
     // Transition to Todo if not already there
     let stateChange: string | undefined;
