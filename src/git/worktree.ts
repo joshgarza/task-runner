@@ -29,8 +29,8 @@ export function getWorktreePath(repoPath: string, issueId: string): string {
   return resolve(repoPath, WORKTREE_DIR, issueId);
 }
 
-export function getBranchName(issueId: string): string {
-  return `task-runner/${issueId.toLowerCase()}`;
+export function getBranchName(issueId: string, prefix = "task-runner"): string {
+  return `${prefix}/${issueId.toLowerCase()}`;
 }
 
 /**
@@ -40,15 +40,16 @@ export function getBranchName(issueId: string): string {
 export function createWorktree(
   repoPath: string,
   issueId: string,
-  defaultBranch: string
+  defaultBranch: string,
+  branchPrefix?: string
 ): string {
   const worktreePath = getWorktreePath(repoPath, issueId);
-  const branch = getBranchName(issueId);
+  const branch = getBranchName(issueId, branchPrefix);
   const gitDir = resolveGitDir(repoPath);
 
   if (existsSync(worktreePath)) {
     log("WARN", issueId, `Worktree already exists at ${worktreePath}, removing first`);
-    removeWorktree(repoPath, issueId);
+    removeWorktree(repoPath, issueId, false, branchPrefix);
   }
 
   // Fetch latest from remote
@@ -76,9 +77,9 @@ export function createWorktree(
  * Remove a worktree and its local branch.
  * Pass deleteRemote: true to also delete the remote branch (e.g. on failure rollback).
  */
-export function removeWorktree(repoPath: string, issueId: string, deleteRemote = false): void {
+export function removeWorktree(repoPath: string, issueId: string, deleteRemote = false, branchPrefix?: string): void {
   const worktreePath = getWorktreePath(repoPath, issueId);
-  const branch = getBranchName(issueId);
+  const branch = getBranchName(issueId, branchPrefix);
   const gitDir = resolveGitDir(repoPath);
 
   try {
