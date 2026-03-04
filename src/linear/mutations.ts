@@ -156,6 +156,18 @@ export async function setIssueLabels(issueId: string, labelIds: string[]): Promi
 }
 
 /**
+ * Create a relation between two issues
+ */
+export async function createRelation(
+  issueId: string,
+  relatedIssueId: string,
+  type: string
+): Promise<void> {
+  const client = getLinearClient();
+  await client.createIssueRelation({ issueId, relatedIssueId, type: type as any });
+}
+
+/**
  * Create a new issue in Linear
  */
 export async function createIssue(opts: {
