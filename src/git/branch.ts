@@ -1,6 +1,6 @@
 // Branch naming, push, PR creation via gh CLI
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { log } from "../logger.ts";
 import type { LinearIssue } from "../types.ts";
 
@@ -91,6 +91,40 @@ export function addPRComment(prUrl: string, body: string): void {
     timeout: 15_000,
     encoding: "utf-8",
   });
+}
+
+/**
+ * Get commit count and files changed between base branch and HEAD
+ */
+export function getCommitStats(
+  worktreePath: string,
+  defaultBranch: string
+): { commitCount: number; filesChanged: number } {
+  try {
+    const commitResult = spawnSync(
+      "git",
+      ["rev-list", "--count", `origin/${defaultBranch}..HEAD`],
+      { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
+    );
+    if (commitResult.status !== 0) {
+      return { commitCount: 0, filesChanged: 0 };
+    }
+    const commitCount = parseInt(commitResult.stdout.trim(), 10) || 0;
+
+    const diffResult = spawnSync(
+      "git",
+      ["diff", "--name-only", `origin/${defaultBranch}..HEAD`],
+      { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
+    );
+    if (diffResult.status !== 0) {
+      return { commitCount: 0, filesChanged: 0 };
+    }
+    const filesChanged = diffResult.stdout.trim().split("\n").filter(Boolean).length;
+
+    return { commitCount, filesChanged };
+  } catch {
+    return { commitCount: 0, filesChanged: 0 };
+  }
 }
 
 function escapeShell(str: string): string {
