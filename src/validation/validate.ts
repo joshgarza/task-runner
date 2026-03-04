@@ -2,6 +2,7 @@
 
 import { execSync } from "node:child_process";
 import { log } from "../logger.ts";
+import { execGit, validateBranchName } from "../git/exec.ts";
 import type { ValidationResult, ProjectConfig } from "../types.ts";
 
 /**
@@ -22,10 +23,11 @@ export function validateAgentOutput(
 
   // 1. Check for new commits
   try {
-    const commits = execSync(
-      `git log "origin/${defaultBranch}..HEAD" --oneline`,
-      { cwd: worktreePath, timeout: 10_000, encoding: "utf-8" }
-    ).trim();
+    validateBranchName(defaultBranch);
+    const commits = execGit(
+      ["log", `origin/${defaultBranch}..HEAD`, "--oneline"],
+      { cwd: worktreePath, timeout: 10_000 }
+    );
 
     if (!commits) {
       errors.push("No new commits found. Agent did not commit any changes.");

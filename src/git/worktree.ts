@@ -1,9 +1,9 @@
 // Create/remove worktrees in target repo
 
-import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "../logger.ts";
+import { execGit, validateBranchName } from "./exec.ts";
 
 const WORKTREE_DIR = ".task-runner-worktrees";
 
@@ -43,6 +43,8 @@ export function createWorktree(
   defaultBranch: string,
   branchPrefix?: string
 ): string {
+  validateBranchName(defaultBranch);
+
   const worktreePath = getWorktreePath(repoPath, issueId);
   const branch = getBranchName(issueId, branchPrefix);
   const gitDir = resolveGitDir(repoPath);
@@ -53,20 +55,12 @@ export function createWorktree(
   }
 
   // Fetch latest from remote
-  execSync("git fetch origin", {
-    cwd: gitDir,
-    timeout: 30_000,
-    encoding: "utf-8",
-  });
+  execGit(["fetch", "origin"], { cwd: gitDir, timeout: 30_000 });
 
   // Create worktree with new branch from origin/defaultBranch
-  execSync(
-    `git worktree add -b "${branch}" "${worktreePath}" "origin/${defaultBranch}"`,
-    {
-      cwd: gitDir,
-      timeout: 30_000,
-      encoding: "utf-8",
-    }
+  execGit(
+    ["worktree", "add", "-b", branch, worktreePath, `origin/${defaultBranch}`],
+    { cwd: gitDir, timeout: 30_000 }
   );
 
   log("INFO", issueId, `Created worktree at ${worktreePath} (branch: ${branch})`);
@@ -83,20 +77,18 @@ export function removeWorktree(repoPath: string, issueId: string, deleteRemote =
   const gitDir = resolveGitDir(repoPath);
 
   try {
-    execSync(`git worktree remove "${worktreePath}" --force`, {
+    execGit(["worktree", "remove", worktreePath, "--force"], {
       cwd: gitDir,
       timeout: 15_000,
-      encoding: "utf-8",
     });
   } catch {
     // May already be removed
   }
 
   try {
-    execSync(`git branch -D "${branch}"`, {
+    execGit(["branch", "-D", branch], {
       cwd: gitDir,
       timeout: 10_000,
-      encoding: "utf-8",
     });
   } catch {
     // Branch may not exist
@@ -104,10 +96,9 @@ export function removeWorktree(repoPath: string, issueId: string, deleteRemote =
 
   if (deleteRemote) {
     try {
-      execSync(`git push origin --delete "${branch}"`, {
+      execGit(["push", "origin", "--delete", branch], {
         cwd: gitDir,
         timeout: 15_000,
-        encoding: "utf-8",
       });
     } catch {
       // Remote branch may not exist
