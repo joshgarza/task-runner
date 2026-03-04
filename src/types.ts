@@ -17,6 +17,7 @@ export interface LinearConfig {
   inProgressState: string;
   inReviewState: string;
   todoState: string;
+  doneState: string;
 }
 
 export interface DefaultsConfig {
