@@ -16,7 +16,7 @@ import { dispatch } from "../agents/dispatcher.ts";
 import { analyzeFailure } from "../agents/failure-analysis.ts";
 import { createProposal } from "../agents/proposals.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
-import { buildReviewPrompt } from "../agents/review-prompt.ts";
+import { buildReviewPrompt, REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
 import type { RunOptions, RunResult, ReviewVerdict } from "../types.ts";
 
@@ -28,13 +28,14 @@ export async function runIssue(
   const config = loadConfig();
 
   const model = options.model ?? config.defaults.model;
+  const reasoningEffort = options.reasoningEffort ?? config.defaults.reasoningEffort;
   const maxTurns = options.maxTurns ?? config.defaults.maxTurns;
   const maxBudgetUsd = options.maxBudgetUsd ?? config.defaults.maxBudgetUsd;
   const maxAttempts = options.maxAttempts ?? config.defaults.maxAttempts;
 
   let transitionedToInProgress = false;
 
-  log("INFO", identifier, `Starting pipeline (model: ${model}, attempts: ${maxAttempts})`);
+  log("INFO", identifier, `Starting pipeline (model: ${model}, reasoning: ${reasoningEffort}, attempts: ${maxAttempts})`);
 
   // 1. Fetch issue from Linear
   let issue;
@@ -119,6 +120,7 @@ export async function runIssue(
       title: issue.title,
       agentType: dispatchResult.agentType,
       model,
+      reasoningEffort,
       maxTurns,
       maxAttempts,
     }));
@@ -154,10 +156,11 @@ export async function runIssue(
         prompt = `IMPORTANT: A previous attempt failed with the following errors. Fix these issues:\n\n${lastError}\n\n---\n\n${prompt}`;
       }
 
-      const agentResult = spawnAgent({
+      const agentResult = await spawnAgent({
         prompt,
         cwd: worktreePath,
         model,
+        reasoningEffort,
         maxTurns,
         maxBudgetUsd,
         agentType: dispatchResult.agentType,
@@ -352,15 +355,17 @@ async function runReview(
 ): Promise<ReviewVerdict> {
   const reviewPrompt = buildReviewPrompt(issue, projectConfig, prUrl);
 
-  const reviewResult = spawnAgent({
+  const reviewResult = await spawnAgent({
     prompt: reviewPrompt,
     cwd: worktreePath,
     model: config.defaults.reviewModel,
+    reasoningEffort: config.defaults.reviewReasoningEffort,
     maxTurns: config.defaults.reviewMaxTurns,
     maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
     agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `${identifier}-review`,
+    outputSchema: REVIEW_VERDICT_SCHEMA,
   });
 
   // Parse review output as JSON
@@ -368,35 +373,8 @@ async function runReview(
 }
 
 function parseReviewVerdict(output: string, issueId: string): ReviewVerdict {
-  // The output is claude JSON output format — extract the result text
-  let text = output;
-
-  // Try to parse as claude --output-format json first
   try {
-    const claudeOutput = JSON.parse(output);
-    if (claudeOutput.result) {
-      text = claudeOutput.result;
-    }
-  } catch {
-    // Not JSON wrapper, use raw
-  }
-
-  // Find JSON object in the text
-  const jsonMatch = text.match(/\{[\s\S]*"approved"[\s\S]*\}/);
-  if (!jsonMatch) {
-    log("WARN", issueId, "Could not find JSON verdict in review output");
-    return {
-      approved: false,
-      summary: "Review agent did not produce a structured verdict.",
-      issues: [],
-      testsPass: false,
-      lintPass: false,
-      tscPass: false,
-    };
-  }
-
-  try {
-    return JSON.parse(jsonMatch[0]) as ReviewVerdict;
+    return JSON.parse(output) as ReviewVerdict;
   } catch (err: any) {
     log("WARN", issueId, `Failed to parse review verdict JSON: ${err.message}`);
     return {

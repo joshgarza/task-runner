@@ -2,6 +2,8 @@
 
 // --- Configuration ---
 
+export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+
 export interface ProjectConfig {
   repoPath: string;
   defaultBranch: string;
@@ -23,12 +25,15 @@ export interface LinearConfig {
 
 export interface DefaultsConfig {
   model: string;
+  reasoningEffort: ModelReasoningEffort;
   maxTurns: number;
   maxBudgetUsd: number;
   reviewModel: string;
+  reviewReasoningEffort: ModelReasoningEffort;
   reviewMaxTurns: number;
   reviewMaxBudgetUsd: number;
   contextModel: string;
+  contextReasoningEffort: ModelReasoningEffort;
   contextMaxTurns: number;
   contextMaxBudgetUsd: number;
   maxAttempts: number;
@@ -96,6 +101,7 @@ export interface ValidationResult {
 
 export interface RunOptions {
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
   maxTurns?: number;
   maxBudgetUsd?: number;
   maxAttempts?: number;

@@ -20,6 +20,7 @@ export function startWork(opts: {
   title: string;
   agentType: string;
   model: string;
+  reasoningEffort: string;
   maxTurns: number;
   maxAttempts: number;
 }): string {
@@ -31,7 +32,8 @@ export function startWork(opts: {
     `| **Issue** | ${opts.identifier}: ${opts.title} |`,
     `| **Agent** | \`${opts.agentType}\` |`,
     `| **Model** | \`${opts.model}\` |`,
-    `| **Max turns** | ${opts.maxTurns} |`,
+    `| **Reasoning** | \`${opts.reasoningEffort}\` |`,
+    `| **Turn cap (compat)** | ${opts.maxTurns} |`,
     `| **Max attempts** | ${opts.maxAttempts} |`,
     `| **Started** | ${timestamp()} |`,
   ].join("\n");

@@ -2,10 +2,26 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { TaskRunnerConfig } from "./types.ts";
+import type { ModelReasoningEffort, TaskRunnerConfig } from "./types.ts";
 
 const CONFIG_FILENAME = "task-runner.config.json";
 const ENV_FILENAME = ".env";
+const VALID_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+function resolveReasoningEffort(
+  value: unknown,
+  fallback: ModelReasoningEffort
+): ModelReasoningEffort {
+  return typeof value === "string" && VALID_REASONING_EFFORTS.has(value as ModelReasoningEffort)
+    ? value as ModelReasoningEffort
+    : fallback;
+}
 
 // Load .env file into process.env (once, at import time)
 function loadDotEnv(): void {
@@ -68,6 +84,8 @@ export function loadConfig(): TaskRunnerConfig {
 
   const configPath = findConfigPath();
   const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+  const defaultModel = raw.defaults?.model ?? "gpt-5.4";
+  const defaultReasoningEffort = resolveReasoningEffort(raw.defaults?.reasoningEffort, "high");
 
   // Merge with defaults
   const config: TaskRunnerConfig = {
@@ -81,13 +99,22 @@ export function loadConfig(): TaskRunnerConfig {
       doneState: raw.linear?.doneState ?? "Done",
     },
     defaults: {
-      model: raw.defaults?.model ?? "opus",
+      model: defaultModel,
+      reasoningEffort: defaultReasoningEffort,
       maxTurns: raw.defaults?.maxTurns ?? 50,
       maxBudgetUsd: raw.defaults?.maxBudgetUsd ?? 10.0,
-      reviewModel: raw.defaults?.reviewModel ?? "opus",
+      reviewModel: raw.defaults?.reviewModel ?? defaultModel,
+      reviewReasoningEffort: resolveReasoningEffort(
+        raw.defaults?.reviewReasoningEffort,
+        defaultReasoningEffort
+      ),
       reviewMaxTurns: raw.defaults?.reviewMaxTurns ?? 15,
       reviewMaxBudgetUsd: raw.defaults?.reviewMaxBudgetUsd ?? 2.0,
-      contextModel: raw.defaults?.contextModel ?? "haiku",
+      contextModel: raw.defaults?.contextModel ?? defaultModel,
+      contextReasoningEffort: resolveReasoningEffort(
+        raw.defaults?.contextReasoningEffort,
+        "medium"
+      ),
       contextMaxTurns: raw.defaults?.contextMaxTurns ?? 10,
       contextMaxBudgetUsd: raw.defaults?.contextMaxBudgetUsd ?? 0.5,
       maxAttempts: raw.defaults?.maxAttempts ?? 2,

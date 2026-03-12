@@ -19,26 +19,38 @@ import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registr
 import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
 import { loadConfig, detectProjectFromCwd } from "./config.ts";
 import { log } from "./logger.ts";
+import type { ModelReasoningEffort } from "./types.ts";
 
 const program = new Command();
+const REASONING_EFFORTS: ModelReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
+
+function parseReasoningEffort(value: string): ModelReasoningEffort {
+  if (REASONING_EFFORTS.includes(value as ModelReasoningEffort)) {
+    return value as ModelReasoningEffort;
+  }
+
+  throw new Error(`Invalid reasoning effort: ${value}. Must be one of: ${REASONING_EFFORTS.join(", ")}`);
+}
 
 program
   .name("task-runner")
-  .description("Linear-powered agent orchestration for Claude Code")
+  .description("Linear-powered agent orchestration via Codex SDK")
   .version("0.1.0");
 
 program
   .command("run <identifier>")
   .description("Run a single Linear issue through the full pipeline")
-  .option("--model <model>", "Claude model to use")
-  .option("--max-turns <n>", "Maximum agent turns", (v: string) => parseInt(v, 10))
-  .option("--max-budget-usd <n>", "Maximum budget in USD", parseFloat)
+  .option("--model <model>", "Codex model to use")
+  .option("--reasoning-effort <level>", "Reasoning effort: minimal, low, medium, high, xhigh", parseReasoningEffort)
+  .option("--max-turns <n>", "Compatibility-only turn cap metadata", (v: string) => parseInt(v, 10))
+  .option("--max-budget-usd <n>", "Compatibility-only budget metadata in USD", parseFloat)
   .option("--max-attempts <n>", "Maximum retry attempts", (v: string) => parseInt(v, 10))
   .option("--dry-run", "Fetch and validate without running agent")
   .action(async (identifier: string, opts) => {
     try {
       const result = await runIssue(identifier, {
         model: opts.model,
+        reasoningEffort: opts.reasoningEffort,
         maxTurns: opts.maxTurns,
         maxBudgetUsd: opts.maxBudgetUsd,
         maxAttempts: opts.maxAttempts,
@@ -410,7 +422,7 @@ program
       for (const agent of types) {
         console.log(`  ${agent.name}`);
         console.log(`    ${agent.description}`);
-        console.log(`    Tools: ${agent.tools.length} | Budget: $${agent.maxBudgetUsd} | Turns: ${agent.maxTurns}`);
+        console.log(`    Declared tools: ${agent.tools.length} | Compat budget: $${agent.maxBudgetUsd} | Compat turns: ${agent.maxTurns}`);
         console.log(`    Created by: ${agent.audit.createdBy}`);
         if (opts.verbose) {
           console.log(`    Tools list:`);

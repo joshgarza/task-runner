@@ -1,6 +1,6 @@
 # task-runner
 
-Linear-powered agent orchestration for Claude Code. Drop tickets into Linear, and task-runner pulls them, spins up Claude agents in isolated worktrees, creates PRs, runs automated reviews, and queues approved work for human merge.
+Linear-powered agent orchestration via Codex SDK. Drop tickets into Linear, and task-runner pulls them, spins up Codex-backed agents in isolated worktrees, creates PRs, runs automated reviews, and queues approved work for human merge.
 
 ## How it works
 
@@ -20,14 +20,14 @@ Linear ticket (agent-ready label, Todo state)
    You review & merge                    Next drain picks up fix ticket
 ```
 
-The runner handles all git operations (push, PR creation) — agents only commit locally. Workers get a scoped tool whitelist (read/write/test/commit), reviewers get read-only access.
+The runner handles all git operations (push, PR creation), agents only commit locally. Workers run in a Codex `workspace-write` sandbox, reviewers and context agents run read-only. The registry still records intended tool scope, but Codex does not enforce Claude-style `allowedTools` whitelists.
 
 ## Setup
 
 ### Prerequisites
 
 - Node.js 22+ (uses `--experimental-strip-types`)
-- `claude` CLI installed
+- Codex auth configured on this machine, for example via `~/.codex`
 - `gh` CLI authenticated
 - Linear API key
 
@@ -65,12 +65,16 @@ Edit `task-runner.config.json` to map Linear projects to repos:
     "todoState": "Todo"
   },
   "defaults": {
-    "model": "opus",
+    "model": "gpt-5.4",
+    "reasoningEffort": "high",
     "maxTurns": 50,
     "maxBudgetUsd": 10.00,
-    "reviewModel": "opus",
+    "reviewModel": "gpt-5.4",
+    "reviewReasoningEffort": "high",
     "reviewMaxTurns": 15,
     "reviewMaxBudgetUsd": 2.00,
+    "contextModel": "gpt-5.4",
+    "contextReasoningEffort": "medium",
     "maxAttempts": 2,
     "agentTimeoutMs": 900000
   },
@@ -88,7 +92,7 @@ Project names must match Linear project names exactly. `prLabels` defaults to em
 ```bash
 # Run a single issue through the full pipeline
 task-runner run JOS-47
-task-runner run JOS-47 --model opus --max-turns 40 --max-budget-usd 10
+task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
 
 # Dry run — fetch and validate without spawning agents
 task-runner run JOS-47 --dry-run
@@ -141,19 +145,19 @@ Direct commits to `main` are blocked by git hooks. Work on feature worktrees, th
 2. **Validate** issue is in Todo or Backlog state
 3. **Transition** Linear → In Progress, add comment
 4. **Create worktree** at `<repo>/.task-runner-worktrees/<issue-id>/`
-5. **Spawn worker agent** with scoped tool whitelist
+5. **Spawn worker agent** in a Codex `workspace-write` sandbox
 6. **Validate output** — commits exist, tests pass, lint clean
 7. **Retry** if validation fails (up to `maxAttempts`)
 8. **Push branch** and **create PR** (runner does this, not the agent)
-9. **Spawn review agent** (read-only) to evaluate the PR
+9. **Spawn review agent** in a read-only sandbox to evaluate the PR
 10. **Act on verdict** — label PR if approved, create fix ticket if not
 11. **Clean up** worktree
 
 ## Agent permissions
 
-**Worker** (implements code): Read, Write, Edit, Glob, Grep, git status/diff/log/add/commit, test/lint/build commands. No git push, no network access, no destructive commands.
+**Worker** (implements code): Codex `workspace-write` sandbox. Prompted to keep changes focused, commit locally, avoid network access, and leave push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Read, Glob, Grep, gh pr diff/view, git diff/log/status, test/lint commands. No Write or Edit — cannot modify code.
+**Reviewer** (reviews PRs): Codex read-only sandbox. Prompted to inspect diffs, run validation commands, and return a structured verdict without changing code.
 
 ## Design decisions
 

@@ -2,6 +2,35 @@
 
 import type { LinearIssue, ProjectConfig } from "../types.ts";
 
+export const REVIEW_VERDICT_SCHEMA = {
+  type: "object",
+  properties: {
+    approved: { type: "boolean" },
+    summary: { type: "string" },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          severity: {
+            type: "string",
+            enum: ["critical", "major", "minor", "nit"],
+          },
+          file: { type: "string" },
+          description: { type: "string" },
+        },
+        required: ["severity", "file", "description"],
+        additionalProperties: false,
+      },
+    },
+    testsPass: { type: "boolean" },
+    lintPass: { type: "boolean" },
+    tscPass: { type: "boolean" },
+  },
+  required: ["approved", "summary", "issues", "testsPass", "lintPass", "tscPass"],
+  additionalProperties: false,
+} as const;
+
 export function buildReviewPrompt(
   issue: LinearIssue,
   teamConfig: ProjectConfig,

@@ -9,7 +9,7 @@ interface PatternRule {
 }
 
 const PATTERNS: PatternRule[] = [
-  // Claude Code permission denial patterns
+  // Agent sandbox and permission denial patterns
   {
     pattern: /tool "([^"]+)" is not allowed/gi,
     category: "permission_denied",
@@ -32,6 +32,11 @@ const PATTERNS: PatternRule[] = [
   },
   {
     pattern: /permission[_\s]denied|access[_\s]denied|not\s+permitted/gi,
+    category: "permission_denied",
+    extractCapability: () => null,
+  },
+  {
+    pattern: /read-only|not writable|approval policy|sandbox/gi,
     category: "permission_denied",
     extractCapability: () => null,
   },

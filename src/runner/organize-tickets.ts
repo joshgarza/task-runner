@@ -8,28 +8,30 @@ import { codebaseContext as formatContextComment, CONTEXT_SENTINEL } from "../li
 import { collectAllNodes, resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
 import { spawnAgent } from "../agents/spawn.ts";
-import { buildContextPrompt } from "../agents/context-prompt.ts";
+import { buildContextPrompt, CONTEXT_RESULT_SCHEMA } from "../agents/context-prompt.ts";
 import type { OrganizeTicketsOptions, OrganizeTicketResult, ContextResult, LinearIssue } from "../types.ts";
 
 /**
- * Spawn a headless Claude instance to gather codebase context for a ticket.
+ * Spawn a Codex-backed context agent to gather codebase context for a ticket.
  * Returns parsed context or null on failure.
  */
-function gatherContext(issue: LinearIssue, repoPath: string): ContextResult | null {
+async function gatherContext(issue: LinearIssue, repoPath: string): Promise<ContextResult | null> {
   const config = loadConfig();
   const prompt = buildContextPrompt(issue);
 
   log("INFO", issue.identifier, `Gathering codebase context...`);
 
-  const result = spawnAgent({
+  const result = await spawnAgent({
     prompt,
     cwd: repoPath,
     model: config.defaults.contextModel,
+    reasoningEffort: config.defaults.contextReasoningEffort,
     maxTurns: config.defaults.contextMaxTurns,
     maxBudgetUsd: config.defaults.contextMaxBudgetUsd,
     agentType: "context",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `context-${issue.identifier}`,
+    outputSchema: CONTEXT_RESULT_SCHEMA,
   });
 
   if (!result.success) {
@@ -37,27 +39,12 @@ function gatherContext(issue: LinearIssue, repoPath: string): ContextResult | nu
     return null;
   }
 
-  // Parse the JSON output (claude --output-format json wraps in { result: ... })
-  let text = result.output;
   try {
-    const parsed = JSON.parse(result.output);
-    if (parsed.result) text = parsed.result;
-  } catch {
-    // Use raw output
-  }
-
-  const jsonMatch = text.match(/\{[\s\S]*"relevantFiles"[\s\S]*\}/);
-  if (!jsonMatch) {
-    log("WARN", issue.identifier, `No structured context found in agent output`);
-    return null;
-  }
-
-  try {
-    const context = JSON.parse(jsonMatch[0]) as ContextResult;
+    const context = JSON.parse(result.output) as ContextResult;
     log("OK", issue.identifier, `Context gathered: ${context.relevantFiles.length} files, ${context.acceptanceCriteria.length} criteria`);
     return context;
-  } catch {
-    log("WARN", issue.identifier, `Failed to parse context JSON`);
+  } catch (err: any) {
+    log("WARN", issue.identifier, `Failed to parse context JSON: ${err.message}`);
     return null;
   }
 }
@@ -196,7 +183,7 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
           log("INFO", issue.identifier, `Context comment already exists, skipping`);
         } else {
           const projectConfig = getProjectConfig(opts.project);
-          const context = gatherContext(issue, projectConfig.repoPath);
+          const context = await gatherContext(issue, projectConfig.repoPath);
           if (context) {
             const comment = formatContextComment(context);
             await addComment(issue.id, comment);

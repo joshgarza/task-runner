@@ -1,56 +1,111 @@
-// spawnSync wrapper for `claude -p` invocations
+// Codex SDK wrapper for agent turns
 
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import os from "node:os";
 import { log } from "../logger.ts";
 import { loadRegistry, resolveAgentType } from "./registry.ts";
-import type { AgentResult } from "../types.ts";
+import type { AgentResult, ModelReasoningEffort } from "../types.ts";
 
-const AGENTS_DIR = import.meta.dirname;
+type ApprovalMode = "never" | "on-request" | "on-failure" | "untrusted";
+type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
-export function loadToolWhitelist(filename: string): string[] {
-  const filepath = resolve(AGENTS_DIR, filename);
-  const config = JSON.parse(readFileSync(filepath, "utf-8"));
-  return config.tools;
+interface CodexThreadOptions {
+  model?: string;
+  sandboxMode?: SandboxMode;
+  workingDirectory?: string;
+  skipGitRepoCheck?: boolean;
+  modelReasoningEffort?: ModelReasoningEffort;
+  networkAccessEnabled?: boolean;
+  approvalPolicy?: ApprovalMode;
+}
+
+interface CodexTurnResult {
+  finalResponse: string;
+}
+
+interface CodexThreadLike {
+  run(input: string, turnOptions?: {
+    outputSchema?: unknown;
+    signal?: AbortSignal;
+  }): Promise<CodexTurnResult>;
+}
+
+interface CodexClientLike {
+  startThread(options?: CodexThreadOptions): CodexThreadLike;
+}
+
+interface CodexModule {
+  Codex: new (options?: {
+    env?: Record<string, string>;
+  }) => CodexClientLike;
+}
+
+let codexClientPromise: Promise<CodexClientLike> | null = null;
+
+async function getCodexClient(): Promise<CodexClientLike> {
+  if (!codexClientPromise) {
+    codexClientPromise = (async () => {
+      const module = await import("@openai/codex-sdk");
+      const { Codex } = module as CodexModule;
+      return new Codex({
+        env: {
+          HOME: process.env.HOME ?? os.homedir(),
+          PATH: process.env.PATH ?? "",
+          TERM: process.env.TERM ?? "xterm-256color",
+        },
+      });
+    })();
+  }
+
+  return codexClientPromise;
 }
 
 export interface SpawnOptions {
   prompt: string;
   cwd: string;
   model: string;
+  reasoningEffort: ModelReasoningEffort;
   maxTurns: number;
   maxBudgetUsd: number;
-  toolsFile?: string;   // legacy: load tools from JSON file
-  agentType?: string;    // new: resolve tools from agent registry
+  toolsFile?: string; // legacy compatibility only
+  agentType?: string;
   timeoutMs: number;
-  context: string; // for logging
+  context: string;
+  outputSchema?: unknown;
+}
+
+function resolveSandboxMode(agentType?: string): SandboxMode {
+  if (agentType === "reviewer" || agentType === "context") {
+    return "read-only";
+  }
+
+  return "workspace-write";
 }
 
 /**
- * Resolve the tool whitelist and caps from either agentType or toolsFile.
- * agentType takes precedence. Enforces budget/turns caps from registry.
+ * Codex does not support the previous allowedTools model. Keep the registry
+ * lookup for agent existence and compatibility caps while enforcing isolation
+ * through sandbox mode.
  */
-function resolveSpawnTools(opts: SpawnOptions): {
-  tools: string[];
+function resolveSpawnProfile(opts: SpawnOptions): {
   maxTurns: number;
   maxBudgetUsd: number;
+  sandboxMode: SandboxMode;
 } {
   if (opts.agentType) {
     const registry = loadRegistry();
     const resolved = resolveAgentType(opts.agentType, registry);
     return {
-      tools: resolved.tools,
       maxTurns: Math.min(opts.maxTurns, resolved.maxTurns),
       maxBudgetUsd: Math.min(opts.maxBudgetUsd, resolved.maxBudgetUsd),
+      sandboxMode: resolveSandboxMode(resolved.name),
     };
   }
 
   if (opts.toolsFile) {
     return {
-      tools: loadToolWhitelist(opts.toolsFile),
       maxTurns: opts.maxTurns,
       maxBudgetUsd: opts.maxBudgetUsd,
+      sandboxMode: "workspace-write",
     };
   }
 
@@ -58,63 +113,65 @@ function resolveSpawnTools(opts: SpawnOptions): {
 }
 
 /**
- * Spawn a Claude agent via `claude -p` with piped prompt.
- * Returns structured result with output, stderr, timing.
+ * Run an agent turn through the Codex SDK.
  */
-export function spawnAgent(opts: SpawnOptions): AgentResult {
-  const { tools, maxTurns, maxBudgetUsd } = resolveSpawnTools(opts);
-
-  const claudeArgs = [
-    "-p",
-    "--model", opts.model,
-    "--max-turns", maxTurns.toString(),
-    "--max-budget-usd", maxBudgetUsd.toString(),
-    "--permission-mode", "bypassPermissions",
-    "--output-format", "json",
-    "--allowedTools", ...tools,
-  ];
-
+export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
+  const { maxTurns, maxBudgetUsd, sandboxMode } = resolveSpawnProfile(opts);
   const agentLabel = opts.agentType ? `[${opts.agentType}]` : `[${opts.toolsFile}]`;
-  log("INFO", opts.context, `Spawning claude ${opts.model} ${agentLabel} (max-turns: ${maxTurns}, budget: $${maxBudgetUsd})`);
+
+  log(
+    "INFO",
+    opts.context,
+    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} ${agentLabel} ` +
+    `(turn-cap=${maxTurns}, budget-cap=$${maxBudgetUsd}; compatibility only)`
+  );
 
   const startTime = Date.now();
   let output = "";
   let stderr = "";
   let exitCode: number | null = null;
+  let timedOut = false;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, opts.timeoutMs);
 
   try {
-    const { CLAUDECODE, ...cleanEnv } = process.env;
-    const result = spawnSync("claude", claudeArgs, {
-      cwd: opts.cwd,
-      input: opts.prompt,
-      timeout: opts.timeoutMs,
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024, // 10MB
-      env: cleanEnv,
+    const client = await getCodexClient();
+    const thread = client.startThread({
+      model: opts.model,
+      modelReasoningEffort: opts.reasoningEffort,
+      sandboxMode,
+      workingDirectory: opts.cwd,
+      skipGitRepoCheck: true,
+      approvalPolicy: "never",
+      networkAccessEnabled: false,
     });
 
-    if (result.error) {
-      throw result.error;
-    }
+    const turn = await thread.run(opts.prompt, {
+      outputSchema: opts.outputSchema,
+      signal: controller.signal,
+    });
 
-    output = result.stdout || "";
-    stderr = result.stderr || "";
-    exitCode = result.status;
-
-    if (result.status !== 0) {
-      log("ERROR", opts.context, `Claude exited with code ${result.status}`);
-      if (stderr) {
-        log("ERROR", opts.context, `stderr: ${stderr.slice(0, 500)}`);
-      }
-    }
+    output = turn.finalResponse.trim();
+    exitCode = 0;
   } catch (err: any) {
-    output = err.message || "Unknown error";
-    log("ERROR", opts.context, `Claude invocation failed: ${err.message?.slice(0, 500)}`);
+    const message = timedOut
+      ? `Timed out after ${opts.timeoutMs}ms`
+      : err instanceof Error
+        ? err.message
+        : String(err);
+    stderr = message;
+    exitCode = timedOut ? 124 : 1;
+    log("ERROR", opts.context, `Codex invocation failed: ${message.slice(0, 500)}`);
+  } finally {
+    clearTimeout(timeout);
   }
 
   const durationMs = Date.now() - startTime;
   const durationSec = (durationMs / 1000).toFixed(1);
-
   log("INFO", opts.context, `Agent finished in ${durationSec}s (exit=${exitCode === 0 ? "ok" : "fail"})`);
 
   return {

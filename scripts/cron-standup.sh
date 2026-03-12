@@ -9,8 +9,15 @@ TASK_RUNNER_DIR="/home/josh/coding/claude/task-runner/main"
 LOG_FILE="$TASK_RUNNER_DIR/logs/standup-cron.log"
 
 # ── Environment ─────────────────────────────────────────────────────
-# cron starts with a minimal PATH; add the tools we need.
-export PATH="/home/josh/.nvm/versions/node/v24.12.0/bin:/home/josh/.local/bin:/usr/bin:/usr/local/bin:$PATH"
+# cron starts with a minimal environment. Rebuild enough of the shell setup to
+# find Node reliably after nvm upgrades and to keep HOME-based paths stable.
+export HOME="${HOME:-/home/josh}"
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$NVM_DIR/nvm.sh"
+fi
+export PATH="$HOME/.local/bin:/usr/bin:/usr/local/bin:$PATH"
 
 # Source secrets (LINEAR_API_KEY, etc.)
 if [ -f "$TASK_RUNNER_DIR/.env" ]; then

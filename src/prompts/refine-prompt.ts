@@ -2,6 +2,25 @@
 
 import type { LinearIssue } from "../types.ts";
 
+export const REFINE_AGENT_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    agentType: { type: "string" },
+    descriptionAddendum: { type: "string" },
+    dependencies: {
+      type: "array",
+      items: { type: "string" },
+    },
+    relevantFiles: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: 10,
+    },
+  },
+  required: ["agentType", "descriptionAddendum", "dependencies", "relevantFiles"],
+  additionalProperties: false,
+} as const;
+
 export function buildRefinePrompt(
   issue: LinearIssue,
   availableAgentTypes: string[],
