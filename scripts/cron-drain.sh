@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cron-drain.sh — Runs task-runner drain on a cron schedule.
-# Intended to be called every 30 minutes via crontab.
+# Intended to be called every 10 minutes via crontab.
 
 set -euo pipefail
 
