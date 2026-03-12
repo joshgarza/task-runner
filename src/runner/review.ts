@@ -1,9 +1,9 @@
 // Standalone PR review (no full pipeline)
 
-import { execSync } from "node:child_process";
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { spawnAgent } from "../agents/spawn.ts";
+import { REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
 import type { ReviewVerdict, ProjectConfig } from "../types.ts";
 
 /**
@@ -72,45 +72,26 @@ Output ONLY a JSON object:
 
 Approve if: tests pass, lint passes, no critical issues, at most 2 major issues.`;
 
-  const result = spawnAgent({
+  const result = await spawnAgent({
     prompt,
     cwd: projectConfig.repoPath,
     model: config.defaults.reviewModel,
+    reasoningEffort: config.defaults.reviewReasoningEffort,
     maxTurns: config.defaults.reviewMaxTurns,
     maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
     agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `review-${prNumber}`,
+    outputSchema: REVIEW_VERDICT_SCHEMA,
   });
 
-  // Parse verdict
-  let text = result.output;
   try {
-    const parsed = JSON.parse(result.output);
-    if (parsed.result) text = parsed.result;
-  } catch {
-    // Use raw
-  }
-
-  const jsonMatch = text.match(/\{[\s\S]*"approved"[\s\S]*\}/);
-  if (!jsonMatch) {
-    log("WARN", "review", "No structured verdict found in review output");
-    return {
-      approved: false,
-      summary: "Review agent did not produce structured output.",
-      issues: [],
-      testsPass: false,
-      lintPass: false,
-      tscPass: false,
-    };
-  }
-
-  try {
-    const verdict = JSON.parse(jsonMatch[0]) as ReviewVerdict;
+    const verdict = JSON.parse(result.output) as ReviewVerdict;
     log("INFO", "review", `Verdict: ${verdict.approved ? "APPROVED" : "NEEDS FIXES"}`);
     console.log(JSON.stringify(verdict, null, 2));
     return verdict;
-  } catch {
+  } catch (err: any) {
+    log("WARN", "review", `Failed to parse review verdict: ${err.message}`);
     return {
       approved: false,
       summary: "Failed to parse review verdict.",

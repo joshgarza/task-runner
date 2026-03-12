@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-task-runner is a Linear-powered agent orchestration tool for Claude Code. It pulls tickets from Linear, spins up Claude agents in isolated worktrees, creates PRs, runs automated code reviews, and queues approved work for human merge.
+task-runner is a Linear-powered agent orchestration tool that now runs through the Codex SDK. It pulls tickets from Linear, spins up Codex-backed agents in isolated worktrees, creates PRs, runs automated code reviews, and queues approved work for human merge.
 
 ## Linear
 - Team: `JOS`
@@ -31,8 +31,8 @@ task-runner is a Linear-powered agent orchestration tool for Claude Code. It pul
 
 - **Runtime**: Node.js 22+ (uses `--experimental-strip-types` — no build step)
 - **Language**: TypeScript (run directly with `node --experimental-strip-types`)
-- **Dependencies**: `@linear/sdk` (Linear API), `commander` (CLI framework)
-- **External tools**: `claude` CLI (agent spawning), `gh` CLI (PR creation/review)
+- **Dependencies**: `@linear/sdk` (Linear API), `@openai/codex-sdk` (agent runtime), `commander` (CLI framework)
+- **External tools**: `gh` CLI (PR creation/review)
 
 ## Git Worktree Workflow
 
@@ -103,7 +103,7 @@ node --experimental-strip-types src/cli.ts <command>
 Run a single Linear issue through the full pipeline.
 ```bash
 task-runner run JOS-47
-task-runner run JOS-47 --model opus --max-turns 40 --max-budget-usd 10
+task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
 task-runner run JOS-47 --dry-run    # Fetch and validate without spawning agents
 ```
 
@@ -187,11 +187,11 @@ task-runner approve-agent <proposal-id> --reject --reason "Too broad tool access
 2. **Validate** issue is in Todo or Backlog state
 3. **Transition** Linear → In Progress, add comment
 4. **Create worktree** at `<repo>/.task-runner-worktrees/<issue-id>/`
-5. **Spawn worker agent** with scoped tool whitelist
+5. **Spawn worker agent** in a Codex `workspace-write` sandbox
 6. **Validate output** — commits exist, tests pass, lint clean
 7. **Retry** if validation fails (up to `maxAttempts`)
 8. **Push branch** and **create PR** (runner does this, not the agent)
-9. **Spawn review agent** (read-only) to evaluate the PR
+9. **Spawn review agent** in a read-only sandbox to evaluate the PR
 10. **Act on verdict** — label PR if approved, create fix ticket if not
 11. **Clean up** worktree
 
@@ -215,7 +215,7 @@ src/
     list-tickets.ts   # Linear issue listing with filters
     organize-tickets.ts # Triage: label blocked/unblocked, gather context
   agents/
-    spawn.ts          # Claude CLI spawning with tool whitelists
+    spawn.ts          # Codex SDK execution wrapper
     registry.ts       # RBAC agent type registry (load, resolve, validate)
     dispatcher.ts     # Dispatches issues to agents by type
     failure-analysis.ts # Analyzes agent failures, proposes new types
@@ -224,9 +224,9 @@ src/
     review-prompt.ts  # System prompt for review agents
     context-prompt.ts # System prompt for context-gathering agents
     agent-registry.json   # Agent type definitions
-    worker-tools.json     # Tool whitelist for worker agents
-    review-tools.json     # Tool whitelist for review agents
-    context-tools.json    # Tool whitelist for context agents
+    worker-tools.json     # Legacy tool whitelist for worker agents
+    review-tools.json     # Legacy tool whitelist for review agents
+    context-tools.json    # Legacy tool whitelist for context agents
   git/
     branch.ts         # Branch creation, push, PR creation
     worktree.ts       # Worktree create/remove for target repos
@@ -241,15 +241,15 @@ src/
 
 ### Agent Permissions
 
-**Worker** (implements code): Read, Write, Edit, Glob, Grep, git status/diff/log/add/commit, test/lint/build commands. No git push, no network access, no destructive commands.
+**Worker** (implements code): Runs in a Codex `workspace-write` sandbox. The prompt constrains scope, commits locally, and leaves push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Read, Glob, Grep, gh pr diff/view, git diff/log/status, test/lint commands. No Write or Edit — cannot modify code.
+**Reviewer** (reviews PRs): Runs in a Codex read-only sandbox with GitHub network access and returns a structured JSON verdict without changing code.
 
 ### Design Decisions
 - **Runner pushes, not agents.** Agents commit locally; the runner handles `git push` and `gh pr create`. This prevents agents from pushing broken code.
 - **Concurrent drain with lock.** The drain command runs multiple agents in parallel (configurable `--concurrency`). A lock file prevents overlapping drain invocations.
 - **Dependency-aware prioritization.** `organize-tickets` detects blocked issues via Linear relations and strips `agent-ready` labels from blocked tickets. Drain processes unblocked issues first.
-- **RBAC agent registry.** Agent types are defined in `agent-registry.json` with scoped tool whitelists. The dispatcher selects agent types per-issue. New types are proposed by failure analysis and require human approval.
+- **RBAC agent registry.** Agent types are still defined in `agent-registry.json`, but Codex enforcement now comes primarily from sandbox mode and prompts rather than Claude-style tool whitelists. The dispatcher still selects agent types per-issue, and new types are still proposed by failure analysis for human approval.
 - **Project-scoped config.** Each Linear project maps to a repo, so one Linear workspace can drive multiple repos.
 
 ## Config Format

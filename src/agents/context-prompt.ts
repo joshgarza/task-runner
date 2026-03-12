@@ -2,6 +2,24 @@
 
 import type { LinearIssue } from "../types.ts";
 
+export const CONTEXT_RESULT_SCHEMA = {
+  type: "object",
+  properties: {
+    relevantFiles: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: 10,
+    },
+    codeContext: { type: "string" },
+    acceptanceCriteria: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+  required: ["relevantFiles", "codeContext", "acceptanceCriteria"],
+  additionalProperties: false,
+} as const;
+
 export function buildContextPrompt(issue: LinearIssue): string {
   return `You are analyzing a codebase to gather context for a Linear ticket. Your goal is to identify relevant code, architecture patterns, and suggest acceptance criteria based on actual code structure.
 

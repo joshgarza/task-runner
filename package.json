@@ -1,7 +1,7 @@
 {
   "name": "task-runner",
   "version": "0.1.0",
-  "description": "Linear-powered agent orchestration for Claude Code",
+  "description": "Linear-powered agent orchestration via Codex SDK",
   "type": "module",
   "bin": {
     "task-runner": "src/cli.ts"
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@linear/sdk": "^37.0.0",
+    "@openai/codex-sdk": "^0.114.0",
     "commander": "^13.0.0"
   }
 }
