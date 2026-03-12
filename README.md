@@ -157,7 +157,7 @@ Direct commits to `main` are blocked by git hooks. Work on feature worktrees, th
 
 **Worker** (implements code): Codex `workspace-write` sandbox. Prompted to keep changes focused, commit locally, avoid network access, and leave push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Codex read-only sandbox. Prompted to inspect diffs, run validation commands, and return a structured verdict without changing code.
+**Reviewer** (reviews PRs): Codex read-only sandbox with GitHub network access. Prompted to inspect diffs, run validation commands, and return a structured verdict without changing code.
 
 ## Design decisions
 

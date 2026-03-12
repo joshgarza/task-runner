@@ -81,6 +81,11 @@ function resolveSandboxMode(agentType?: string): SandboxMode {
   return "workspace-write";
 }
 
+function resolveNetworkAccess(agentType?: string): boolean {
+  // Standalone and pipeline PR review rely on GitHub CLI/API access.
+  return agentType === "reviewer";
+}
+
 /**
  * Codex does not support the previous allowedTools model. Keep the registry
  * lookup for agent existence and compatibility caps while enforcing isolation
@@ -90,6 +95,7 @@ function resolveSpawnProfile(opts: SpawnOptions): {
   maxTurns: number;
   maxBudgetUsd: number;
   sandboxMode: SandboxMode;
+  networkAccessEnabled: boolean;
 } {
   if (opts.agentType) {
     const registry = loadRegistry();
@@ -98,6 +104,7 @@ function resolveSpawnProfile(opts: SpawnOptions): {
       maxTurns: Math.min(opts.maxTurns, resolved.maxTurns),
       maxBudgetUsd: Math.min(opts.maxBudgetUsd, resolved.maxBudgetUsd),
       sandboxMode: resolveSandboxMode(resolved.name),
+      networkAccessEnabled: resolveNetworkAccess(resolved.name),
     };
   }
 
@@ -106,6 +113,7 @@ function resolveSpawnProfile(opts: SpawnOptions): {
       maxTurns: opts.maxTurns,
       maxBudgetUsd: opts.maxBudgetUsd,
       sandboxMode: "workspace-write",
+      networkAccessEnabled: false,
     };
   }
 
@@ -116,13 +124,13 @@ function resolveSpawnProfile(opts: SpawnOptions): {
  * Run an agent turn through the Codex SDK.
  */
 export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
-  const { maxTurns, maxBudgetUsd, sandboxMode } = resolveSpawnProfile(opts);
+  const { maxTurns, maxBudgetUsd, sandboxMode, networkAccessEnabled } = resolveSpawnProfile(opts);
   const agentLabel = opts.agentType ? `[${opts.agentType}]` : `[${opts.toolsFile}]`;
 
   log(
     "INFO",
     opts.context,
-    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} ${agentLabel} ` +
+    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled} ${agentLabel} ` +
     `(turn-cap=${maxTurns}, budget-cap=$${maxBudgetUsd}; compatibility only)`
   );
 
@@ -147,7 +155,7 @@ export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
       workingDirectory: opts.cwd,
       skipGitRepoCheck: true,
       approvalPolicy: "never",
-      networkAccessEnabled: false,
+      networkAccessEnabled,
     });
 
     const turn = await thread.run(opts.prompt, {

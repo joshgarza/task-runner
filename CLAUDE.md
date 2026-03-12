@@ -243,7 +243,7 @@ src/
 
 **Worker** (implements code): Runs in a Codex `workspace-write` sandbox. The prompt constrains scope, commits locally, and leaves push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Runs in a Codex read-only sandbox and returns a structured JSON verdict without changing code.
+**Reviewer** (reviews PRs): Runs in a Codex read-only sandbox with GitHub network access and returns a structured JSON verdict without changing code.
 
 ### Design Decisions
 - **Runner pushes, not agents.** Agents commit locally; the runner handles `git push` and `gh pr create`. This prevents agents from pushing broken code.
