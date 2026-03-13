@@ -6,6 +6,9 @@ import type { ModelReasoningEffort, TaskRunnerConfig } from "./types.ts";
 
 const CONFIG_FILENAME = "task-runner.config.json";
 const ENV_FILENAME = ".env";
+const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  opus: "gpt-5.4",
+};
 const VALID_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
   "minimal",
   "low",
@@ -13,6 +16,15 @@ const VALID_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
   "high",
   "xhigh",
 ]);
+
+function resolveModel(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  return LEGACY_MODEL_ALIASES[trimmed] ?? trimmed;
+}
 
 function resolveReasoningEffort(
   value: unknown,
@@ -84,7 +96,7 @@ export function loadConfig(): TaskRunnerConfig {
 
   const configPath = findConfigPath();
   const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-  const defaultModel = raw.defaults?.model ?? "gpt-5.4";
+  const defaultModel = resolveModel(raw.defaults?.model, "gpt-5.4");
   const defaultReasoningEffort = resolveReasoningEffort(raw.defaults?.reasoningEffort, "high");
 
   // Merge with defaults
@@ -103,14 +115,14 @@ export function loadConfig(): TaskRunnerConfig {
       reasoningEffort: defaultReasoningEffort,
       maxTurns: raw.defaults?.maxTurns ?? 50,
       maxBudgetUsd: raw.defaults?.maxBudgetUsd ?? 10.0,
-      reviewModel: raw.defaults?.reviewModel ?? defaultModel,
+      reviewModel: resolveModel(raw.defaults?.reviewModel, defaultModel),
       reviewReasoningEffort: resolveReasoningEffort(
         raw.defaults?.reviewReasoningEffort,
         defaultReasoningEffort
       ),
       reviewMaxTurns: raw.defaults?.reviewMaxTurns ?? 15,
       reviewMaxBudgetUsd: raw.defaults?.reviewMaxBudgetUsd ?? 2.0,
-      contextModel: raw.defaults?.contextModel ?? defaultModel,
+      contextModel: resolveModel(raw.defaults?.contextModel, defaultModel),
       contextReasoningEffort: resolveReasoningEffort(
         raw.defaults?.contextReasoningEffort,
         "medium"

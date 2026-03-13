@@ -275,10 +275,10 @@ src/
     "todoState": "Todo"
   },
   "defaults": {
-    "model": "opus",
+    "model": "gpt-5.4",
     "maxTurns": 50,
     "maxBudgetUsd": 10.00,
-    "reviewModel": "opus",
+    "reviewModel": "gpt-5.4",
     "reviewMaxTurns": 15,
     "reviewMaxBudgetUsd": 2.00,
     "maxAttempts": 2,
