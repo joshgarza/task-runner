@@ -21,7 +21,6 @@ export function startWork(opts: {
   agentType: string;
   model: string;
   reasoningEffort: string;
-  maxTurns: number;
   maxAttempts: number;
 }): string {
   return [
@@ -33,7 +32,6 @@ export function startWork(opts: {
     `| **Agent** | \`${opts.agentType}\` |`,
     `| **Model** | \`${opts.model}\` |`,
     `| **Reasoning** | \`${opts.reasoningEffort}\` |`,
-    `| **Turn cap (compat)** | ${opts.maxTurns} |`,
     `| **Max attempts** | ${opts.maxAttempts} |`,
     `| **Started** | ${timestamp()} |`,
   ].join("\n");

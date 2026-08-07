@@ -14,8 +14,6 @@
       "Bash(git commit:*)",
       "Bash(ls:*)"
     ],
-    "maxBudgetUsd": 5.00,
-    "maxTurns": 30,
     "audit": {
       "createdBy": "system",
       "createdAt": "2026-02-25T00:00:00Z",
@@ -32,8 +30,6 @@
       "Bash(npm run build:*)",
       "Bash(npx tsc:*)"
     ],
-    "maxBudgetUsd": 10.00,
-    "maxTurns": 50,
     "audit": {
       "createdBy": "system",
       "createdAt": "2026-02-25T00:00:00Z",
@@ -56,8 +52,6 @@
       "Bash(npx tsc:*)",
       "Bash(ls:*)"
     ],
-    "maxBudgetUsd": 2.00,
-    "maxTurns": 15,
     "audit": {
       "createdBy": "system",
       "createdAt": "2026-02-25T00:00:00Z",
@@ -73,8 +67,6 @@
       "Bash(ls:*)",
       "Bash(git log:*)"
     ],
-    "maxBudgetUsd": 0.50,
-    "maxTurns": 10,
     "audit": {
       "createdBy": "system",
       "createdAt": "2026-02-25T00:00:00Z",

@@ -26,8 +26,6 @@ async function gatherContext(issue: LinearIssue, repoPath: string): Promise<Cont
     cwd: repoPath,
     model: config.defaults.contextModel,
     reasoningEffort: config.defaults.contextReasoningEffort,
-    maxTurns: config.defaults.contextMaxTurns,
-    maxBudgetUsd: config.defaults.contextMaxBudgetUsd,
     agentType: "context",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `context-${issue.identifier}`,

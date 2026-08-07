@@ -73,8 +73,6 @@ export async function createProposal(opts: {
     baseAgentType,
     proposedAgentType: proposedName,
     proposedTools,
-    proposedMaxBudgetUsd: baseResolved.maxBudgetUsd,
-    proposedMaxTurns: baseResolved.maxTurns,
     failureAnalysis,
     status: "pending",
     createdAt: new Date().toISOString(),
@@ -185,8 +183,6 @@ export async function approveProposal(
   addAgentType(proposal.proposedAgentType, {
     description: `Auto-generated for ${proposal.issueIdentifier}: ${proposal.issueTitle}`,
     tools: proposal.proposedTools,
-    maxBudgetUsd: proposal.proposedMaxBudgetUsd,
-    maxTurns: proposal.proposedMaxTurns,
     audit: {
       createdBy: `proposal:${proposal.id}`,
       createdAt: new Date().toISOString(),

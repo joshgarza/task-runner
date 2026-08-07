@@ -42,8 +42,6 @@ program
   .description("Run a single Linear issue through the full pipeline")
   .option("--model <model>", "Codex model to use")
   .option("--reasoning-effort <level>", "Reasoning effort: minimal, low, medium, high, xhigh", parseReasoningEffort)
-  .option("--max-turns <n>", "Compatibility-only turn cap metadata", (v: string) => parseInt(v, 10))
-  .option("--max-budget-usd <n>", "Compatibility-only budget metadata in USD", parseFloat)
   .option("--max-attempts <n>", "Maximum retry attempts", (v: string) => parseInt(v, 10))
   .option("--dry-run", "Fetch and validate without running agent")
   .action(async (identifier: string, opts) => {
@@ -51,8 +49,6 @@ program
       const result = await runIssue(identifier, {
         model: opts.model,
         reasoningEffort: opts.reasoningEffort,
-        maxTurns: opts.maxTurns,
-        maxBudgetUsd: opts.maxBudgetUsd,
         maxAttempts: opts.maxAttempts,
         dryRun: opts.dryRun,
       });
@@ -422,7 +418,7 @@ program
       for (const agent of types) {
         console.log(`  ${agent.name}`);
         console.log(`    ${agent.description}`);
-        console.log(`    Declared tools: ${agent.tools.length} | Compat budget: $${agent.maxBudgetUsd} | Compat turns: ${agent.maxTurns}`);
+        console.log(`    Declared tools: ${agent.tools.length}`);
         console.log(`    Created by: ${agent.audit.createdBy}`);
         if (opts.verbose) {
           console.log(`    Tools list:`);
@@ -491,7 +487,6 @@ program
       for (const tool of proposal.proposedTools) {
         console.log(`  - ${tool}`);
       }
-      console.log(`Budget: $${proposal.proposedMaxBudgetUsd} | Turns: ${proposal.proposedMaxTurns}`);
       console.log();
 
       if (opts.reject) {

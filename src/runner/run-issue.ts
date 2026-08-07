@@ -29,8 +29,6 @@ export async function runIssue(
 
   const model = options.model ?? config.defaults.model;
   const reasoningEffort = options.reasoningEffort ?? config.defaults.reasoningEffort;
-  const maxTurns = options.maxTurns ?? config.defaults.maxTurns;
-  const maxBudgetUsd = options.maxBudgetUsd ?? config.defaults.maxBudgetUsd;
   const maxAttempts = options.maxAttempts ?? config.defaults.maxAttempts;
 
   let transitionedToInProgress = false;
@@ -121,7 +119,6 @@ export async function runIssue(
       agentType: dispatchResult.agentType,
       model,
       reasoningEffort,
-      maxTurns,
       maxAttempts,
     }));
     transitionedToInProgress = true;
@@ -161,8 +158,6 @@ export async function runIssue(
         cwd: worktreePath,
         model,
         reasoningEffort,
-        maxTurns,
-        maxBudgetUsd,
         agentType: dispatchResult.agentType,
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
@@ -360,8 +355,6 @@ async function runReview(
     cwd: worktreePath,
     model: config.defaults.reviewModel,
     reasoningEffort: config.defaults.reviewReasoningEffort,
-    maxTurns: config.defaults.reviewMaxTurns,
-    maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
     agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `${identifier}-review`,
