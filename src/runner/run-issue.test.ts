@@ -3,7 +3,7 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { postPRLink } from "./run-issue.ts";
+import { postPRLink, transitionToInReview } from "./run-issue.ts";
 
 // Mock modules before importing the function under test
 const addCommentCalls: { issueId: string; body: string }[] = [];
@@ -136,5 +136,47 @@ describe("postPRLink", () => {
       warnLogs.some((l) => l.message.includes("Failed to persist PR URL via description fallback")),
       "should log the final fallback failure"
     );
+  });
+});
+
+describe("transitionToInReview", () => {
+  it("retries a transient Linear transition failure", async () => {
+    let attempts = 0;
+    const result = await transitionToInReview(
+      "issue-1",
+      "JOS",
+      "In Review",
+      "JOS-1",
+      {
+        transitionIssue: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error("Linear unavailable");
+        },
+        delay: async () => {},
+        log: () => {},
+      }
+    );
+
+    assert.deepEqual(result, { transitioned: true, attempts: 2 });
+  });
+
+  it("returns failure after both Linear transition attempts fail", async () => {
+    const result = await transitionToInReview(
+      "issue-1",
+      "JOS",
+      "In Review",
+      "JOS-1",
+      {
+        transitionIssue: async () => { throw new Error("Linear unavailable"); },
+        delay: async () => {},
+        log: () => {},
+      }
+    );
+
+    assert.deepEqual(result, {
+      transitioned: false,
+      attempts: 2,
+      error: "Linear unavailable",
+    });
   });
 });

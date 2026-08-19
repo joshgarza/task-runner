@@ -265,18 +265,40 @@ export async function runIssue(
     // 12. Request native GitHub Codex review. GitHub owns review feedback;
     // TaskRunner only records the request and reconciles final PR state.
     const reviewRequest = await requestCodexReview(prUrl, identifier);
+    const inReviewTransition = await transitionToInReview(
+      issue.id,
+      issue.teamKey,
+      config.linear.inReviewState,
+      identifier
+    );
     try {
-      await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
       await addComment(issue.id, comments.nativeReviewRequested({
         prUrl,
         requested: reviewRequest.requested,
         error: reviewRequest.error,
       }));
     } catch (err: any) {
-      log("WARN", identifier, `Failed to record native review state in Linear: ${err.message}`);
+      log("WARN", identifier, `Failed to record native review request in Linear: ${err.message}`);
     }
 
+    // The implementation and remote PR succeeded, so preserve the branch even
+    // if Linear state reconciliation exhausted its retries.
     pipelineSucceeded = true;
+
+    if (!inReviewTransition.transitioned) {
+      const error = `PR created, but failed to transition issue to ${config.linear.inReviewState} after ${inReviewTransition.attempts} attempts: ${inReviewTransition.error}`;
+      log("ERROR", identifier, error);
+      return {
+        issueId: identifier,
+        success: false,
+        executionRoute,
+        prUrl,
+        reviewRequested: reviewRequest.requested,
+        error,
+        durationMs: Date.now() - startTime,
+        attempts,
+      };
+    }
 
     return {
       issueId: identifier,
@@ -422,6 +444,54 @@ const defaultPostPRLinkDependencies: PostPRLinkDependencies = {
   log,
   delay: (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
 };
+
+export interface InReviewTransitionResult {
+  transitioned: boolean;
+  attempts: number;
+  error?: string;
+}
+
+export interface InReviewTransitionDependencies {
+  transitionIssue: typeof transitionIssue;
+  delay: (ms: number) => Promise<void>;
+  log: typeof log;
+}
+
+const defaultInReviewTransitionDependencies: InReviewTransitionDependencies = {
+  transitionIssue,
+  delay: (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
+  log,
+};
+
+export async function transitionToInReview(
+  issueId: string,
+  teamKey: string,
+  stateName: string,
+  context: string,
+  deps: InReviewTransitionDependencies = defaultInReviewTransitionDependencies
+): Promise<InReviewTransitionResult> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await deps.transitionIssue(issueId, teamKey, stateName);
+      return { transitioned: true, attempts: attempt };
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log(
+        "WARN",
+        context,
+        `Transition to ${stateName} attempt ${attempt}/${maxAttempts} failed: ${message}`
+      );
+      if (attempt < maxAttempts) {
+        await deps.delay(1000);
+      } else {
+        return { transitioned: false, attempts: attempt, error: message };
+      }
+    }
+  }
+
+  return { transitioned: false, attempts: maxAttempts, error: "Transition failed" };
+}
 
 function failure(
   issueId: string,

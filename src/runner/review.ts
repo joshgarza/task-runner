@@ -23,20 +23,42 @@ const defaultDependencies: NativeReviewRequestDependencies = {
   log,
 };
 
+export function normalizeGitHubPullRequestUrl(prUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(prUrl);
+  } catch {
+    throw new Error(`Invalid PR URL: ${prUrl}`);
+  }
+
+  const match = parsed.pathname.match(
+    /^\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:\/.*)?$/
+  );
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== "github.com" ||
+    parsed.port !== "" ||
+    !match
+  ) {
+    throw new Error(`Invalid PR URL: ${prUrl}`);
+  }
+
+  const [, owner, repo, prNumber] = match;
+  return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
+}
+
 export async function requestCodexReview(
   prUrl: string,
   context = "review",
   deps: NativeReviewRequestDependencies = defaultDependencies
 ): Promise<NativeReviewRequestResult> {
-  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(prUrl)) {
-    throw new Error(`Invalid PR URL: ${prUrl}`);
-  }
+  const canonicalPrUrl = normalizeGitHubPullRequestUrl(prUrl);
 
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      deps.addPRComment(prUrl, CODEX_REVIEW_MENTION);
-      deps.log("OK", context, `Requested native Codex review: ${prUrl}`);
+      deps.addPRComment(canonicalPrUrl, CODEX_REVIEW_MENTION);
+      deps.log("OK", context, `Requested native Codex review: ${canonicalPrUrl}`);
       return { requested: true, attempts: attempt };
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);

@@ -24,17 +24,20 @@ export interface PrHealthResult {
   reason: string;
 }
 
-const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 
 /**
- * Extract PR URLs from Linear issue comments.
- * Matches the format used by run-issue.ts: "PR created: <url>"
+ * Extract PR URLs from the issue description fallback and comments.
+ * Matches the formats written by run-issue.ts.
  */
-export function extractPrUrls(comments: string[]): string[] {
+export function extractPrUrls(
+  comments: string[],
+  description: string | null = null
+): string[] {
   const urls: string[] = [];
-  for (const comment of comments) {
-    const match = comment.match(PR_URL_REGEX);
-    if (match) {
+  const sources = description ? [description, ...comments] : comments;
+  for (const source of sources) {
+    for (const match of source.matchAll(PR_URL_REGEX)) {
       urls.push(match[0]);
     }
   }
@@ -137,10 +140,10 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
   const results: PrHealthResult[] = [];
 
   for (const issue of issues) {
-    const prUrls = extractPrUrls(issue.comments);
+    const prUrls = extractPrUrls(issue.comments, issue.description);
 
     if (prUrls.length === 0) {
-      log("INFO", issue.identifier, `${prefix}No PR URL found in comments, skipping`);
+      log("INFO", issue.identifier, `${prefix}No PR URL found on issue, skipping`);
       continue;
     }
 

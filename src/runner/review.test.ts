@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { CODEX_REVIEW_MENTION, requestCodexReview } from "./review.ts";
+import {
+  CODEX_REVIEW_MENTION,
+  normalizeGitHubPullRequestUrl,
+  requestCodexReview,
+} from "./review.ts";
 
 describe("requestCodexReview", () => {
   it("requests a standard GitHub Codex review", async () => {
@@ -40,6 +44,28 @@ describe("requestCodexReview", () => {
     assert.deepEqual(result, { requested: true, attempts: 2 });
   });
 
+  it("normalizes browser-form pull request URLs before commenting", async () => {
+    const urls: string[] = [];
+
+    for (const prUrl of [
+      "https://github.com/joshgarza/task-runner/pull/45/",
+      "https://github.com/joshgarza/task-runner/pull/45/files",
+      "https://github.com/joshgarza/task-runner/pull/45/commits?after=abc#diff-file",
+    ]) {
+      await requestCodexReview(prUrl, "JOS-200", {
+        addPRComment: (url) => urls.push(url),
+        delay: async () => {},
+        log: () => {},
+      });
+    }
+
+    assert.deepEqual(urls, [
+      "https://github.com/joshgarza/task-runner/pull/45",
+      "https://github.com/joshgarza/task-runner/pull/45",
+      "https://github.com/joshgarza/task-runner/pull/45",
+    ]);
+  });
+
   it("returns a failure result after both attempts fail", async () => {
     const result = await requestCodexReview(
       "https://github.com/joshgarza/task-runner/pull/45",
@@ -61,6 +87,13 @@ describe("requestCodexReview", () => {
   it("rejects non-GitHub pull request URLs", async () => {
     await assert.rejects(
       requestCodexReview("https://example.com/pull/1"),
+      /Invalid PR URL/
+    );
+  });
+
+  it("rejects GitHub URLs that are not pull requests", () => {
+    assert.throws(
+      () => normalizeGitHubPullRequestUrl("https://github.com/joshgarza/task-runner/issues/45"),
       /Invalid PR URL/
     );
   });
