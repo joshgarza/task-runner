@@ -5,7 +5,7 @@
 import { Command } from "commander";
 import { runIssue } from "./runner/run-issue.ts";
 import { drain } from "./runner/drain.ts";
-import { reviewPR } from "./runner/review.ts";
+import { requestCodexReview } from "./runner/review.ts";
 import { standup } from "./runner/standup.ts";
 import { addTicket } from "./runner/add-ticket.ts";
 import { editTicket } from "./runner/edit-ticket.ts";
@@ -54,9 +54,8 @@ program
       if (result.success) {
         log("OK", identifier, `Pipeline complete`);
         if (result.prUrl) console.log(`\nPR: ${result.prUrl}`);
-        if (result.reviewVerdict) {
-          console.log(`Review: ${result.reviewVerdict.approved ? "APPROVED" : "NEEDS FIXES"}`);
-          console.log(`Summary: ${result.reviewVerdict.summary}`);
+        if (result.reviewRequested !== undefined) {
+          console.log(`Native Codex review: ${result.reviewRequested ? "REQUESTED" : "REQUEST FAILED"}`);
         }
       } else {
         log("ERROR", identifier, `Pipeline failed: ${result.error}`);
@@ -99,11 +98,14 @@ program
 
 program
   .command("review <pr-url>")
-  .description("Review an existing PR standalone")
+  .description("Request a native Codex review on an existing GitHub PR")
   .action(async (prUrl: string) => {
     try {
-      const verdict = await reviewPR(prUrl);
-      process.exit(verdict.approved ? 0 : 1);
+      const result = await requestCodexReview(prUrl);
+      if (!result.requested) {
+        log("ERROR", "review", `Review request failed: ${result.error}`);
+        process.exit(1);
+      }
     } catch (err: any) {
       log("ERROR", "review", `Review failed: ${err.message}`);
       process.exit(1);

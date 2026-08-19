@@ -64,32 +64,25 @@ export interface LocalCodexOptions {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   profile: "write" | "read";
-  networkAccessEnabled?: boolean;
   timeoutMs: number;
   context: string;
   outputSchema?: unknown;
 }
 
-function resolveExecutionProfile(opts: LocalCodexOptions): {
-  sandboxMode: SandboxMode;
-  networkAccessEnabled: boolean;
-} {
-  return {
-    sandboxMode: opts.profile === "write" ? "workspace-write" : "read-only",
-    networkAccessEnabled: opts.networkAccessEnabled ?? false,
-  };
+function resolveSandboxMode(opts: LocalCodexOptions): SandboxMode {
+  return opts.profile === "write" ? "workspace-write" : "read-only";
 }
 
 /**
  * Run an agent turn through the Codex SDK.
  */
 export async function runLocalCodex(opts: LocalCodexOptions): Promise<AgentResult> {
-  const { sandboxMode, networkAccessEnabled } = resolveExecutionProfile(opts);
+  const sandboxMode = resolveSandboxMode(opts);
 
   log(
     "INFO",
     opts.context,
-    `Running local Codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled}`
+    `Running local Codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=false`
   );
 
   const startTime = Date.now();
@@ -113,7 +106,7 @@ export async function runLocalCodex(opts: LocalCodexOptions): Promise<AgentResul
       workingDirectory: opts.cwd,
       skipGitRepoCheck: true,
       approvalPolicy: "never",
-      networkAccessEnabled,
+      networkAccessEnabled: false,
     });
 
     const turn = await thread.run(opts.prompt, {

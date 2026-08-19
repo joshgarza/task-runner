@@ -28,8 +28,6 @@ export interface LinearConfig {
 export interface DefaultsConfig {
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  reviewModel: string;
-  reviewReasoningEffort: ModelReasoningEffort;
   contextModel: string;
   contextReasoningEffort: ModelReasoningEffort;
   maxAttempts: number;
@@ -39,7 +37,6 @@ export interface DefaultsConfig {
 
 export interface GithubConfig {
   prLabels: string[];
-  reviewApprovedLabel?: string;
 }
 
 export interface TaskRunnerConfig {
@@ -66,23 +63,6 @@ export interface LinearIssue {
   comments: string[];
   url: string;
   branchName: string;
-}
-
-// --- Review ---
-
-export interface ReviewVerdict {
-  approved: boolean;
-  summary: string;
-  issues: ReviewIssue[];
-  testsPass: boolean;
-  lintPass: boolean;
-  tscPass: boolean;
-}
-
-export interface ReviewIssue {
-  severity: "critical" | "major" | "minor" | "nit";
-  file: string;
-  description: string;
 }
 
 // --- Validation ---
@@ -115,7 +95,7 @@ export interface RunResult {
   success: boolean;
   executionRoute?: ExecutionRoute;
   prUrl?: string;
-  reviewVerdict?: ReviewVerdict;
+  reviewRequested?: boolean;
   error?: string;
   durationMs: number;
   attempts: number;

@@ -1,19 +1,17 @@
-// Full pipeline: fetch → worktree → agent → validate → push → PR → review
+// Full pipeline: fetch, route, implement, validate, create PR, request review.
 
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
-import { transitionIssue, addComment, createChildIssue, updateIssue } from "../linear/mutations.ts";
+import { transitionIssue, addComment, updateIssue } from "../linear/mutations.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
-import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment, getCommitStats } from "../git/branch.ts";
+import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
 import { getGitHubRepository } from "../git/remote.ts";
 import * as comments from "../linear/comments.ts";
 import { runLocalCodex } from "../agents/spawn.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
-import { buildReviewPrompt, REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
+import { requestCodexReview } from "./review.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
 import {
   buildCloudDelegationComment,
@@ -26,7 +24,6 @@ import type {
   ProjectConfig,
   RunOptions,
   RunResult,
-  ReviewVerdict,
   TaskRunnerConfig,
 } from "../types.ts";
 
@@ -265,67 +262,67 @@ export async function runIssue(
     // 11. Link PR to Linear (retry + fallback to ensure PR URL is always persisted)
     await postPRLink(issue.id, issue.teamKey, prUrl, issue.description, identifier);
 
-    // 12. Spawn review agent
-    let verdict: ReviewVerdict | undefined;
+    // 12. Request native GitHub Codex review. GitHub owns review feedback;
+    // TaskRunner only records the request and reconciles final PR state.
+    const reviewRequest = await requestCodexReview(prUrl, identifier);
+    const inReviewTransition = reviewRequest.requested
+      ? await transitionToInReview(
+          issue.id,
+          issue.teamKey,
+          config.linear.inReviewState,
+          identifier
+        )
+      : null;
     try {
-      verdict = await runReview(issue, projectConfig, prUrl, worktreePath, config, identifier);
+      await addComment(issue.id, comments.nativeReviewRequested({
+        prUrl,
+        requested: reviewRequest.requested,
+        error: reviewRequest.error,
+      }));
     } catch (err: any) {
-      log("WARN", identifier, `Review failed (non-fatal): ${err.message}`);
+      log("WARN", identifier, `Failed to record native review request in Linear: ${err.message}`);
     }
 
-    // 13. Act on verdict
-    if (verdict) {
-      if (verdict.approved) {
-        log("OK", identifier, "Review: APPROVED");
-        try {
-          if (config.github.reviewApprovedLabel) {
-            addPRLabel(prUrl, config.github.reviewApprovedLabel);
-          }
-          await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
-          await addComment(issue.id, comments.reviewPassed({ verdict, prUrl }));
-        } catch (err: any) {
-          log("WARN", identifier, `Failed to label/transition after approval: ${err.message}`);
-        }
-      } else {
-        log("WARN", identifier, `Review: NEEDS FIXES — ${verdict.summary}`);
-        try {
-          const issueBody = [
-            `## Review Feedback for ${issue.identifier}`,
-            "",
-            verdict.summary,
-            "",
-            "### Issues",
-            ...verdict.issues.map(
-              (i) => `- **${i.severity}** (${i.file}): ${i.description}`
-            ),
-            "",
-            `PR: ${prUrl}`,
-          ].join("\n");
-
-          const childId = await createChildIssue(
-            issue.id,
-            issue.teamKey,
-            `Fix review feedback: ${issue.identifier}`,
-            issueBody,
-            [config.linear.agentLabel],
-            issue.projectId
-          );
-          log("INFO", identifier, `Created fix ticket: ${childId}`);
-          addPRComment(prUrl, `Review needs fixes. Created follow-up ticket: ${childId}\n\n${verdict.summary}`);
-        } catch (err: any) {
-          log("WARN", identifier, `Failed to create fix ticket: ${err.message}`);
-        }
-      }
-    }
-
+    // The implementation and remote PR succeeded, so preserve the branch even
+    // if Linear state reconciliation exhausted its retries.
     pipelineSucceeded = true;
+
+    if (!reviewRequest.requested) {
+      const error = `PR created, but failed to request native Codex review after ${reviewRequest.attempts} attempts: ${reviewRequest.error}`;
+      log("ERROR", identifier, error);
+      return {
+        issueId: identifier,
+        success: false,
+        executionRoute,
+        prUrl,
+        reviewRequested: false,
+        error,
+        durationMs: Date.now() - startTime,
+        attempts,
+      };
+    }
+
+    if (!inReviewTransition.transitioned) {
+      const error = `PR created, but failed to transition issue to ${config.linear.inReviewState} after ${inReviewTransition.attempts} attempts: ${inReviewTransition.error}`;
+      log("ERROR", identifier, error);
+      return {
+        issueId: identifier,
+        success: false,
+        executionRoute,
+        prUrl,
+        reviewRequested: reviewRequest.requested,
+        error,
+        durationMs: Date.now() - startTime,
+        attempts,
+      };
+    }
 
     return {
       issueId: identifier,
       success: true,
       executionRoute,
       prUrl,
-      reviewVerdict: verdict,
+      reviewRequested: reviewRequest.requested,
       durationMs: Date.now() - startTime,
       attempts,
     };
@@ -391,48 +388,6 @@ async function delegateCloudIssue(
     durationMs: Date.now() - startTime,
     attempts: 0,
   };
-}
-
-async function runReview(
-  issue: any,
-  projectConfig: any,
-  prUrl: string,
-  worktreePath: string,
-  config: any,
-  identifier: string
-): Promise<ReviewVerdict> {
-  const reviewPrompt = buildReviewPrompt(issue, projectConfig, prUrl);
-
-  const reviewResult = await runLocalCodex({
-    prompt: reviewPrompt,
-    cwd: worktreePath,
-    model: config.defaults.reviewModel,
-    reasoningEffort: config.defaults.reviewReasoningEffort,
-    profile: "read",
-    networkAccessEnabled: true,
-    timeoutMs: config.defaults.agentTimeoutMs,
-    context: `${identifier}-review`,
-    outputSchema: REVIEW_VERDICT_SCHEMA,
-  });
-
-  // Parse review output as JSON
-  return parseReviewVerdict(reviewResult.output, identifier);
-}
-
-function parseReviewVerdict(output: string, issueId: string): ReviewVerdict {
-  try {
-    return JSON.parse(output) as ReviewVerdict;
-  } catch (err: any) {
-    log("WARN", issueId, `Failed to parse review verdict JSON: ${err.message}`);
-    return {
-      approved: false,
-      summary: "Review verdict JSON was malformed.",
-      issues: [],
-      testsPass: false,
-      lintPass: false,
-      tscPass: false,
-    };
-  }
 }
 
 async function rollbackInProgress(
@@ -506,6 +461,54 @@ const defaultPostPRLinkDependencies: PostPRLinkDependencies = {
   log,
   delay: (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
 };
+
+export interface InReviewTransitionResult {
+  transitioned: boolean;
+  attempts: number;
+  error?: string;
+}
+
+export interface InReviewTransitionDependencies {
+  transitionIssue: typeof transitionIssue;
+  delay: (ms: number) => Promise<void>;
+  log: typeof log;
+}
+
+const defaultInReviewTransitionDependencies: InReviewTransitionDependencies = {
+  transitionIssue,
+  delay: (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
+  log,
+};
+
+export async function transitionToInReview(
+  issueId: string,
+  teamKey: string,
+  stateName: string,
+  context: string,
+  deps: InReviewTransitionDependencies = defaultInReviewTransitionDependencies
+): Promise<InReviewTransitionResult> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await deps.transitionIssue(issueId, teamKey, stateName);
+      return { transitioned: true, attempts: attempt };
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log(
+        "WARN",
+        context,
+        `Transition to ${stateName} attempt ${attempt}/${maxAttempts} failed: ${message}`
+      );
+      if (attempt < maxAttempts) {
+        await deps.delay(1000);
+      } else {
+        return { transitioned: false, attempts: attempt, error: message };
+      }
+    }
+  }
+
+  return { transitioned: false, attempts: maxAttempts, error: "Transition failed" };
+}
 
 function failure(
   issueId: string,

@@ -24,28 +24,47 @@ export interface PrHealthResult {
   reason: string;
 }
 
-const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+export interface PrSnapshot {
+  url: string;
+  state: string;
+  createdAt: string;
+}
+
+const RUNNER_COMMENT_PR_REGEX =
+  /(?:^|\n)🤖 PR created:\s*(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)(?=\s|$)/g;
+const RUNNER_DESCRIPTION_PR_REGEX =
+  /(?:^|\n)PR:\s*(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)(?=\s|$)/g;
 
 /**
- * Extract PR URLs from Linear issue comments.
- * Matches the format used by run-issue.ts: "PR created: <url>"
+ * Extract only the PR URL markers written by run-issue.ts.
+ * Other PR URLs may be ordinary ticket context and must not veto reconciliation.
  */
-export function extractPrUrls(comments: string[]): string[] {
+export function extractPrUrls(
+  comments: string[],
+  description: string | null = null
+): string[] {
   const urls: string[] = [];
-  for (const comment of comments) {
-    const match = comment.match(PR_URL_REGEX);
-    if (match) {
-      urls.push(match[0]);
+
+  if (description) {
+    for (const match of description.matchAll(RUNNER_DESCRIPTION_PR_REGEX)) {
+      urls.push(match[1]);
     }
   }
+
+  for (const comment of comments) {
+    for (const match of comment.matchAll(RUNNER_COMMENT_PR_REGEX)) {
+      urls.push(match[1]);
+    }
+  }
+
   return urls;
 }
 
 /**
- * Check PR state via gh CLI. Returns "MERGED", "CLOSED", or "OPEN".
+ * Check PR state and creation time via gh CLI.
  */
-function getPrState(prUrl: string): string | null {
-  const result = spawnSync("gh", ["pr", "view", prUrl, "--json", "state"], {
+function getPrSnapshot(prUrl: string): PrSnapshot | null {
+  const result = spawnSync("gh", ["pr", "view", prUrl, "--json", "state,createdAt"], {
     timeout: 15_000,
     encoding: "utf-8",
   });
@@ -58,11 +77,22 @@ function getPrState(prUrl: string): string | null {
 
   try {
     const parsed = JSON.parse(result.stdout.trim());
-    return parsed.state ?? null;
+    if (!parsed.state || !parsed.createdAt) {
+      log("WARN", "pr-health", `Missing PR state or creation time for ${prUrl}`);
+      return null;
+    }
+    return { url: prUrl, state: parsed.state, createdAt: parsed.createdAt };
   } catch {
-    log("WARN", "pr-health", `Failed to parse PR state JSON for ${prUrl}`);
+    log("WARN", "pr-health", `Failed to parse PR metadata JSON for ${prUrl}`);
     return null;
   }
+}
+
+export function selectNewestPr(snapshots: PrSnapshot[]): PrSnapshot | null {
+  if (snapshots.length === 0) return null;
+  return snapshots.reduce((newest, candidate) =>
+    Date.parse(candidate.createdAt) > Date.parse(newest.createdAt) ? candidate : newest
+  );
 }
 
 /**
@@ -137,21 +167,32 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
   const results: PrHealthResult[] = [];
 
   for (const issue of issues) {
-    const prUrls = extractPrUrls(issue.comments);
+    const prUrls = extractPrUrls(issue.comments, issue.description);
 
     if (prUrls.length === 0) {
-      log("INFO", issue.identifier, `${prefix}No PR URL found in comments, skipping`);
+      log("INFO", issue.identifier, `${prefix}No PR URL found on issue, skipping`);
       continue;
     }
 
-    // Use the last PR URL (most recent)
-    const prUrl = prUrls[prUrls.length - 1];
-    const prState = getPrState(prUrl);
+    const snapshots: PrSnapshot[] = [];
+    let metadataComplete = true;
+    for (const prUrl of new Set(prUrls)) {
+      const snapshot = getPrSnapshot(prUrl);
+      if (!snapshot) {
+        metadataComplete = false;
+        log("WARN", issue.identifier, `${prefix}Could not determine PR metadata for ${prUrl}`);
+        break;
+      }
+      snapshots.push(snapshot);
+    }
 
-    if (!prState) {
-      log("WARN", issue.identifier, `${prefix}Could not determine PR state for ${prUrl}`);
+    if (!metadataComplete) {
       continue;
     }
+
+    const newestPr = selectNewestPr(snapshots);
+    if (!newestPr) continue;
+    const { url: prUrl, state: prState } = newestPr;
 
     if (prState === "OPEN") {
       log("INFO", issue.identifier, `${prefix}PR is still open: ${prUrl}`);

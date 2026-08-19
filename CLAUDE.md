@@ -104,7 +104,7 @@ Run a single Linear issue through the full pipeline.
 ```bash
 task-runner run JOS-47
 task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
-task-runner run JOS-47 --dry-run    # Fetch and validate without spawning agents
+task-runner run JOS-47 --dry-run    # Fetch and resolve routing without executing work
 ```
 
 ### `drain`
@@ -170,7 +170,7 @@ task-runner organize-tickets --team JOS --context --dry-run
 6. **Run local Codex** in a `workspace-write` sandbox
 7. **Validate and retry** until output passes or `maxAttempts` is exhausted
 8. **Push branch** and **create PR**
-9. **Run review** and reconcile Linear state
+9. **Request native Codex review** and transition Linear to In Review
 10. **Clean up** the local worktree
 
 ### Source Layout
@@ -186,7 +186,7 @@ src/
   runner/
     run-issue.ts      # Full pipeline for a single issue
     drain.ts          # Concurrent issue processing
-    review.ts         # Standalone PR review
+    review.ts         # Native GitHub Codex review request
     standup.ts        # Linear activity digest
     add-ticket.ts     # Linear issue creation
     edit-ticket.ts    # Linear issue updates + comments
@@ -195,7 +195,6 @@ src/
   agents/
     spawn.ts          # Codex SDK execution wrapper
     worker-prompt.ts  # System prompt for worker agents
-    review-prompt.ts  # System prompt for review agents
     context-prompt.ts # System prompt for context-gathering agents
   git/
     branch.ts         # Branch creation, push, PR creation
@@ -248,15 +247,13 @@ src/
   },
   "defaults": {
     "model": "gpt-5.4",
-    "reviewModel": "gpt-5.4",
     "maxAttempts": 2,
     "agentTimeoutMs": 900000
   },
   "github": {
-    "prLabels": [],
-    "reviewApprovedLabel": "ready-for-human-review"
+    "prLabels": []
   }
 }
 ```
 
-Project names must match Linear project names exactly. `team` is optional — when set, `--team` is auto-detected from cwd. `branchPrefix` is optional and defaults to `"task-runner"`, producing branches like `task-runner/jos-123`. `prLabels` is an empty array by default (no auto-labels). `reviewApprovedLabel` is optional.
+Project names must match Linear project names exactly. `team` is optional. When set, `--team` is auto-detected from cwd. `branchPrefix` defaults to `"task-runner"`, producing branches like `task-runner/jos-123`. `prLabels` is empty by default.

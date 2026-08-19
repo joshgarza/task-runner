@@ -40,42 +40,6 @@ export async function addComment(issueId: string, body: string): Promise<void> {
 }
 
 /**
- * Create a child issue (for review feedback requiring fixes)
- */
-export async function createChildIssue(
-  parentId: string,
-  teamKey: string,
-  title: string,
-  description: string,
-  labelNames: string[],
-  projectId?: string | null
-): Promise<string> {
-  const client = getLinearClient();
-
-  // Find team
-  const teams = await client.teams({ filter: { key: { eq: teamKey } } });
-  const team = teams.nodes[0];
-  if (!team) throw new Error(`Team not found: ${teamKey}`);
-
-  // Resolve label IDs (paginated, includes workspace labels)
-  const labelIds = await resolveLabels(teamKey, labelNames, "create-child-issue");
-
-  const payload: LinearDocument.IssueCreateInput = {
-    teamId: team.id,
-    title,
-    description,
-    parentId,
-    labelIds,
-    ...(projectId ? { projectId } : {}),
-  };
-
-  const result = await client.createIssue(payload);
-
-  const issue = await result.issue;
-  return issue?.identifier ?? "unknown";
-}
-
-/**
  * Update an existing issue's fields
  */
 export async function updateIssue(
