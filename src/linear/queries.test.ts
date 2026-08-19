@@ -19,9 +19,9 @@ describe("buildRecentActivityFilter", () => {
 describe("selectCommentBodiesByAuthor", () => {
   it("keeps only comments authored by the trusted Linear identity", async () => {
     const comments = [
-      { body: "trusted marker", user: Promise.resolve({ id: "runner-user" }) },
-      { body: "forged marker", user: Promise.resolve({ id: "other-user" }) },
-      { body: "external marker", user: undefined },
+      { body: "trusted marker", authorId: "runner-user" },
+      { body: "forged marker", authorId: "other-user" },
+      { body: "external marker", authorId: undefined },
     ];
 
     assert.deepEqual(

@@ -6,6 +6,37 @@ import type { LinearIssue } from "../types.ts";
 
 let taskRunnerCommentAuthorId: Promise<string> | undefined;
 
+type CommentRecord = {
+  body: string;
+  authorId?: string;
+};
+
+type CommentPage = {
+  issue: {
+    comments: {
+      nodes: Array<{ body: string; user?: { id: string } | null }>;
+      pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+    };
+  };
+};
+
+const ISSUE_COMMENTS_QUERY = `
+  query TaskRunnerIssueComments($id: String!, $after: String) {
+    issue(id: $id) {
+      comments(first: 250, after: $after) {
+        nodes {
+          body
+          user { id }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
 function getTaskRunnerCommentAuthorId(): Promise<string> {
   if (!taskRunnerCommentAuthorId) {
     taskRunnerCommentAuthorId = Promise.resolve(getLinearClient().viewer).then(
@@ -16,23 +47,45 @@ function getTaskRunnerCommentAuthorId(): Promise<string> {
 }
 
 export async function selectCommentBodiesByAuthor(
-  allComments: any[],
+  allComments: CommentRecord[],
   authorId: string
 ): Promise<string[]> {
-  const trustedBodies = await Promise.all(
-    allComments.map(async (comment: any) => {
-      const author = await comment.user;
-      return author?.id === authorId ? comment.body : null;
-    })
-  );
-  return trustedBodies.filter((body): body is string => body !== null);
+  return allComments
+    .filter((comment) => comment.authorId === authorId)
+    .map((comment) => comment.body);
 }
 
-async function getTaskRunnerCommentBodies(allComments: any[]): Promise<string[]> {
+async function getTaskRunnerCommentBodies(allComments: CommentRecord[]): Promise<string[]> {
   return selectCommentBodiesByAuthor(
     allComments,
     await getTaskRunnerCommentAuthorId()
   );
+}
+
+async function fetchIssueCommentRecords(issueId: string): Promise<CommentRecord[]> {
+  const client = getLinearClient();
+  const comments: CommentRecord[] = [];
+  let after: string | undefined;
+
+  do {
+    const data = await client.client.request<
+      CommentPage,
+      { id: string; after?: string }
+    >(ISSUE_COMMENTS_QUERY, { id: issueId, after });
+    const page = data.issue.comments;
+    comments.push(...page.nodes.map((comment) => ({
+      body: comment.body,
+      authorId: comment.user?.id,
+    })));
+
+    if (!page.pageInfo.hasNextPage) break;
+    if (!page.pageInfo.endCursor) {
+      throw new Error(`Linear comment pagination returned no cursor for ${issueId}`);
+    }
+    after = page.pageInfo.endCursor;
+  } while (true);
+
+  return comments;
 }
 
 /**
@@ -44,9 +97,8 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const project = await issue.project;
   const labelsConn = await issue.labels({ first: 250 });
   const allLabels = await collectAllNodes(labelsConn);
-  const commentsConn = await issue.comments({ first: 250 });
-  const allComments = await collectAllNodes(commentsConn);
-  const allCommentBodies = allComments.map((comment: any) => comment.body);
+  const allComments = await fetchIssueCommentRecords(issue.id);
+  const allCommentBodies = allComments.map((comment) => comment.body);
   const trustedCommentBodies = await getTaskRunnerCommentBodies(allComments);
 
   if (!team) {
@@ -102,10 +154,7 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
 }
 
 export async function fetchTaskRunnerCommentBodies(issueId: string): Promise<string[]> {
-  const client = getLinearClient();
-  const issue = await client.issue(issueId);
-  const commentsConn = await issue.comments({ first: 250 });
-  const allComments = await collectAllNodes(commentsConn);
+  const allComments = await fetchIssueCommentRecords(issueId);
   return getTaskRunnerCommentBodies(allComments);
 }
 
