@@ -12,6 +12,11 @@ import * as comments from "../linear/comments.ts";
 import { runLocalCodex } from "../agents/spawn.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
 import { requestCodexReview } from "./review.ts";
+import {
+  getDrainFailurePolicy,
+  getDrainFailureStatus,
+  quarantineDrainFailure,
+} from "./drain-failures.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
 import {
   buildCloudDelegationComment,
@@ -60,7 +65,15 @@ export async function runIssue(
     return failure(identifier, `Invalid execution routing: ${err.message}`, startTime, 0);
   }
 
+  const drainFailurePolicy = getDrainFailurePolicy(config);
+  const drainFailureStatus = getDrainFailureStatus(issue, drainFailurePolicy);
+
   if (options.dryRun) {
+    if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.applies) {
+      log("INFO", identifier, `[dry-run] Would stop because the issue has the "${config.linear.agentFailedLabel}" label`);
+    } else if (drainFailureStatus.shouldQuarantine) {
+      log("INFO", identifier, `[dry-run] Would remove from the agent queue after ${drainFailureStatus.failureCount} failed run(s)`);
+    }
     log("INFO", identifier, `Dry run — stopping after fetch and route resolution (${executionRoute})`);
     return {
       issueId: identifier,
@@ -90,6 +103,38 @@ export async function runIssue(
     return failure(
       identifier,
       reason,
+      startTime,
+      0
+    );
+  }
+
+  // Permanently failed local queue items require human triage before another
+  // unattended run. Direct runs retain this guard in case drain state changed
+  // between its initial fetch and execution.
+  if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.applies) {
+    return failure(
+      identifier,
+      `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${config.linear.agentLabel}" after human triage.`,
+      startTime,
+      0
+    );
+  }
+
+  if (drainFailureStatus.shouldQuarantine) {
+    try {
+      await quarantineDrainFailure(issue, drainFailurePolicy);
+    } catch (err: any) {
+      return failure(
+        identifier,
+        `Failed to remove permanently failing issue from the agent queue: ${err.message}`,
+        startTime,
+        0
+      );
+    }
+
+    return failure(
+      identifier,
+      `Agent failed ${drainFailureStatus.failureCount} times. Removed from the agent queue for human triage.`,
       startTime,
       0
     );

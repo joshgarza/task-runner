@@ -14,6 +14,7 @@ function timestamp(): string {
  * If this changes, update the check in organize-tickets.ts too.
  */
 export const CONTEXT_SENTINEL = "## Codebase Context (auto-generated)";
+export const AGENT_FAILURE_QUARANTINE_MARKER = "agent-failures-quarantined";
 
 export function startWork(opts: {
   identifier: string;
@@ -110,7 +111,7 @@ export function rollback(opts: {
   attempts: number;
 }): string {
   return [
-    `## Agent Failed, Rolled Back to Todo`,
+    `🤖 Agent failed, rolled back to Todo`,
     ``,
     `### Error`,
     ``,
@@ -128,6 +129,24 @@ export function rollback(opts: {
     `- Review the error and update the ticket with additional context`,
     `- If the work requires operations access, route it to human-gated ops`,
     `- Re-queue by adding the \`agent-ready\` label`,
+  ].join("\n");
+}
+
+export function agentFailureQuarantined(opts: {
+  failureCount: number;
+  totalFailureCount: number;
+  agentLabel: string;
+  agentFailedLabel: string;
+}): string {
+  return [
+    `## Removed from Agent Queue`,
+    ``,
+    `Agent failed ${opts.failureCount} times, removing from queue. Requires human triage.`,
+    ``,
+    `The \`${opts.agentFailedLabel}\` label was added and the \`${opts.agentLabel}\` label was removed.`,
+    `To re-queue after triage, remove \`${opts.agentFailedLabel}\` and re-add \`${opts.agentLabel}\`.`,
+    ``,
+    `<!-- ${AGENT_FAILURE_QUARANTINE_MARKER}:${opts.totalFailureCount} -->`,
   ].join("\n");
 }
 

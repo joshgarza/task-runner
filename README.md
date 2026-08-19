@@ -62,6 +62,7 @@ Edit `task-runner.config.json` to map Linear projects to repos:
   },
   "linear": {
     "agentLabel": "agent-ready",
+    "agentFailedLabel": "agent-failed",
     "inProgressState": "In Progress",
     "inReviewState": "In Review",
     "todoState": "Todo"
@@ -72,6 +73,7 @@ Edit `task-runner.config.json` to map Linear projects to repos:
     "contextModel": "gpt-5.4",
     "contextReasoningEffort": "medium",
     "maxAttempts": 2,
+    "maxDrainFailures": 2,
     "agentTimeoutMs": 900000
   },
   "github": {

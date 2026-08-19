@@ -14,6 +14,7 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const labelsConn = await issue.labels({ first: 250 });
   const allLabels = await collectAllNodes(labelsConn);
   const commentsConn = await issue.comments({ first: 250 });
+  const allComments = await collectAllNodes(commentsConn);
 
   if (!team) {
     throw new Error(`Issue ${issue.identifier} has no team`);
@@ -31,7 +32,7 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
     projectName: project?.name ?? null,
     projectId: project?.id ?? null,
     labels: allLabels.map((l: any) => l.name),
-    comments: commentsConn.nodes.map((c: any) => c.body),
+    comments: allComments.map((c: any) => c.body),
     url: issue.url,
     branchName: issue.branchName,
   };
@@ -72,23 +73,17 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
 export async function fetchAgentReadyIssues(
   labelName: string,
   stateNames: string | string[],
-  projectName?: string
+  projectName?: string,
+  excludedLabelName?: string
 ): Promise<LinearIssue[]> {
   const client = getLinearClient();
 
-  // Build filter — support single state or multiple states
-  const stateFilter = Array.isArray(stateNames)
-    ? { name: { in: stateNames } }
-    : { name: { eq: stateNames } };
-
-  const filter: any = {
-    labels: { name: { eq: labelName } },
-    state: stateFilter,
-  };
-
-  if (projectName) {
-    filter.project = { name: { eq: projectName } };
-  }
+  const filter = buildAgentReadyIssueFilter(
+    labelName,
+    stateNames,
+    projectName,
+    excludedLabelName
+  );
 
   const issues = await client.issues({
     filter,
@@ -101,6 +96,37 @@ export async function fetchAgentReadyIssues(
   }
 
   return results;
+}
+
+export function buildAgentReadyIssueFilter(
+  labelName: string,
+  stateNames: string | string[],
+  projectName?: string,
+  excludedLabelName?: string
+): any {
+  // Build filter — support single state or multiple states
+  const stateFilter = Array.isArray(stateNames)
+    ? { name: { in: stateNames } }
+    : { name: { eq: stateNames } };
+
+  const filter: any = {
+    state: stateFilter,
+  };
+
+  if (excludedLabelName) {
+    filter.and = [
+      { labels: { some: { name: { eq: labelName } } } },
+      { labels: { every: { name: { neq: excludedLabelName } } } },
+    ];
+  } else {
+    filter.labels = { name: { eq: labelName } };
+  }
+
+  if (projectName) {
+    filter.project = { name: { eq: projectName } };
+  }
+
+  return filter;
 }
 
 /**

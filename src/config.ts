@@ -104,6 +104,7 @@ export function loadConfig(): TaskRunnerConfig {
     projects: raw.projects ?? {},
     linear: {
       agentLabel: raw.linear?.agentLabel ?? "agent-ready",
+      agentFailedLabel: raw.linear?.agentFailedLabel ?? "agent-failed",
       needsApprovalLabel: raw.linear?.needsApprovalLabel ?? "needs-human-approval",
       inProgressState: raw.linear?.inProgressState ?? "In Progress",
       inReviewState: raw.linear?.inReviewState ?? "In Review",
@@ -119,6 +120,7 @@ export function loadConfig(): TaskRunnerConfig {
         "medium"
       ),
       maxAttempts: raw.defaults?.maxAttempts ?? 2,
+      maxDrainFailures: raw.defaults?.maxDrainFailures ?? 2,
       agentTimeoutMs: raw.defaults?.agentTimeoutMs ?? 900_000,
       drainConcurrency: raw.defaults?.drainConcurrency ?? 1,
     },
