@@ -181,6 +181,18 @@ export async function runIssue(
   // 4. Transition local work to In Progress
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
+    transitionedToInProgress = true;
+    log("INFO", identifier, `Transitioned to "${config.linear.inProgressState}"`);
+  } catch (err: any) {
+    return failure(
+      identifier,
+      `Failed to transition issue to ${config.linear.inProgressState}: ${err.message}`,
+      startTime,
+      0
+    );
+  }
+
+  try {
     await addComment(issue.id, comments.startWork({
       identifier: issue.identifier,
       title: issue.title,
@@ -189,10 +201,8 @@ export async function runIssue(
       reasoningEffort,
       maxAttempts,
     }));
-    transitionedToInProgress = true;
-    log("INFO", identifier, `Transitioned to "${config.linear.inProgressState}"`);
   } catch (err: any) {
-    log("WARN", identifier, `Failed to transition issue: ${err.message}`);
+    log("WARN", identifier, `Failed to post work-started comment: ${err.message}`);
   }
 
   // 6. Create worktree

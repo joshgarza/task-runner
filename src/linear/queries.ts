@@ -131,9 +131,10 @@ export async function fetchAgentReadyIssues(
     filter,
     first: 50,
   });
+  const allIssues = await collectAllNodes(issues);
 
   const results: LinearIssue[] = [];
-  for (const issue of issues.nodes) {
+  for (const issue of allIssues) {
     results.push(await toLinearIssue(issue));
   }
 

@@ -48,26 +48,11 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       }
     }
 
-    // Collect all issues across projects, respecting the limit
-    // Query both Todo and Backlog — matches the valid states in run-issue.ts
+    // Reconcile every quarantined project independently of the execution
+    // limit, so a full queue in one project cannot starve another project's
+    // missing acknowledgement markers.
     const fetchStates = [config.linear.todoState, "Backlog"];
-    const allIssues: LinearIssue[] = [];
     for (const projectName of projectNames) {
-      log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
-
-      let issues;
-      try {
-        issues = await fetchAgentReadyIssues(
-          label,
-          fetchStates,
-          projectName,
-          config.linear.agentFailedLabel
-        );
-      } catch (err: any) {
-        log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
-        continue;
-      }
-
       let quarantinedIssues: LinearIssue[] = [];
       try {
         quarantinedIssues = await fetchAgentReadyIssues(
@@ -105,6 +90,26 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
             `Failed to reconcile quarantine marker: ${err.message}`
           );
         }
+      }
+    }
+
+    // Collect all issues across projects, respecting the limit
+    // Query both Todo and Backlog — matches the valid states in run-issue.ts
+    const allIssues: LinearIssue[] = [];
+    for (const projectName of projectNames) {
+      log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
+
+      let issues;
+      try {
+        issues = await fetchAgentReadyIssues(
+          label,
+          fetchStates,
+          projectName,
+          config.linear.agentFailedLabel
+        );
+      } catch (err: any) {
+        log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
+        continue;
       }
 
       if (issues.length === 0) {
