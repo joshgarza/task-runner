@@ -11,6 +11,7 @@ import {
   getDrainFailurePolicy,
   getDrainFailureStatus,
   quarantineDrainFailure,
+  reconcileDrainFailureMarker,
 } from "./drain-failures.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
@@ -20,7 +21,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
   const label = options.label ?? config.linear.agentLabel;
   const limit = options.limit ?? 50;
   const concurrency = options.concurrency ?? config.defaults.drainConcurrency;
-  const drainFailurePolicy = getDrainFailurePolicy(config);
+  const drainFailurePolicy = getDrainFailurePolicy(config, label);
 
   if (!acquireLock()) {
     log("WARN", null, "Lock held by another worker, skipping drain");
@@ -60,11 +61,40 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
           label,
           fetchStates,
           projectName,
-          label === config.linear.agentLabel ? config.linear.agentFailedLabel : undefined
+          config.linear.agentFailedLabel
         );
       } catch (err: any) {
         log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
         continue;
+      }
+
+      try {
+        const quarantinedIssues = await fetchAgentReadyIssues(
+          config.linear.agentFailedLabel,
+          fetchStates,
+          projectName
+        );
+        for (const issue of quarantinedIssues) {
+          const reconciled = await reconcileDrainFailureMarker(
+            issue,
+            drainFailurePolicy,
+            options.dryRun
+          );
+          if (reconciled) {
+            const prefix = options.dryRun ? "[dry-run] Would reconcile" : "Reconciled";
+            log(
+              "INFO",
+              issue.identifier,
+              `${prefix} missing quarantine marker after ${reconciled.failureCount} failed run(s)`
+            );
+          }
+        }
+      } catch (err: any) {
+        log(
+          "WARN",
+          null,
+          `Failed to reconcile quarantined issues for "${projectName}": ${err.message}`
+        );
       }
 
       if (issues.length === 0) {

@@ -153,6 +153,23 @@ export function agentFailureQuarantined(opts: {
   ].join("\n");
 }
 
+export function agentFailureQuarantineReconciled(opts: {
+  failureCount: number;
+  totalFailureCount: number;
+  agentFailedLabel: string;
+}): string {
+  return [
+    `## Removed from Agent Queue`,
+    ``,
+    `Agent failed ${opts.failureCount} times, removing from queue. Requires human triage.`,
+    ``,
+    `The \`${opts.agentFailedLabel}\` label remains applied.`,
+    `To re-queue after triage, remove \`${opts.agentFailedLabel}\` and add the intended queue label.`,
+    ``,
+    `<!-- ${AGENT_FAILURE_QUARANTINE_MARKER}:${opts.totalFailureCount} -->`,
+  ].join("\n");
+}
+
 /**
  * Format codebase context gathered by the context agent.
  * Moved from organize-tickets.ts for consistency.

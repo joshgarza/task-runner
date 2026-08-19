@@ -6,6 +6,7 @@ import {
   countAgentFailures,
   getDrainFailureStatus,
   quarantineDrainFailure,
+  reconcileDrainFailureMarker,
 } from "./drain-failures.ts";
 import { buildAgentReadyIssueFilter } from "../linear/queries.ts";
 import * as comments from "../linear/comments.ts";
@@ -77,6 +78,22 @@ describe("drain failure detection", () => {
     assert.equal(getDrainFailureStatus(issue, threeFailurePolicy).shouldQuarantine, false);
     issue.comments.push("🤖 Agent failed, rolled back to Todo");
     assert.equal(getDrainFailureStatus(issue, threeFailurePolicy).shouldQuarantine, true);
+  });
+
+  it("applies the failure policy to a custom drain queue label", () => {
+    const customPolicy = { ...policy, agentLabel: "priority-queue" };
+    const status = getDrainFailureStatus(
+      {
+        labels: ["priority-queue", "execution:local"],
+        comments: [
+          "🤖 Agent failed, rolled back to Todo",
+          "🤖 Agent failed, rolled back to Todo",
+        ],
+      },
+      customPolicy
+    );
+
+    assert.equal(status.shouldQuarantine, true);
   });
 
   it("treats a quarantine marker as human acknowledgement when re-queued", () => {
@@ -309,6 +326,36 @@ describe("drain failure detection", () => {
     });
 
     assert.equal(labelCalls.length, 1);
+  });
+
+  it("reconciles a missing marker on a fail-closed quarantined issue", async () => {
+    const posted: string[] = [];
+    const issue = {
+      id: "issue-1",
+      labels: ["agent-failed", "execution:local"],
+      comments: [
+        "🤖 Agent failed, rolled back to Todo",
+        "🤖 Agent failed, rolled back to Todo",
+      ],
+    };
+
+    const status = await reconcileDrainFailureMarker(issue, policy, false, {
+      addComment: async (_issueId, body) => {
+        posted.push(body);
+      },
+    });
+
+    assert.equal(status?.failureCount, 2);
+    assert.equal(posted.length, 1);
+    assert.match(posted[0], /agent-failures-quarantined:2/);
+
+    const alreadyReconciled = await reconcileDrainFailureMarker(
+      { ...issue, comments: [...issue.comments, posted[0]] },
+      policy,
+      false,
+      { addComment: async () => assert.fail("must not post twice") }
+    );
+    assert.equal(alreadyReconciled, null);
   });
 });
 

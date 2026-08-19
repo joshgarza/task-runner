@@ -41,9 +41,12 @@ const defaultDependencies: DrainFailureDependencies = {
   fetchIssueCommentBodies,
 };
 
-export function getDrainFailurePolicy(config: TaskRunnerConfig): DrainFailurePolicy {
+export function getDrainFailurePolicy(
+  config: TaskRunnerConfig,
+  agentLabel: string = config.linear.agentLabel
+): DrainFailurePolicy {
   return {
-    agentLabel: config.linear.agentLabel,
+    agentLabel,
     agentFailedLabel: config.linear.agentFailedLabel,
     maxDrainFailures: config.defaults.maxDrainFailures,
   };
@@ -170,6 +173,34 @@ export async function quarantineDrainFailure(
       }
       throw secondError;
     }
+  }
+
+  return status;
+}
+
+export async function reconcileDrainFailureMarker(
+  issue: Pick<LinearIssue, "id" | "labels" | "comments">,
+  policy: DrainFailurePolicy,
+  dryRun = false,
+  deps: Pick<DrainFailureDependencies, "addComment"> = { addComment }
+): Promise<DrainFailureStatus | null> {
+  const status = getDrainFailureStatus(issue, policy);
+  const needsReconciliation =
+    status.isLocal &&
+    status.hasAgentFailedLabel &&
+    status.failureCount >= policy.maxDrainFailures;
+
+  if (!needsReconciliation) return null;
+
+  if (!dryRun) {
+    await deps.addComment(
+      issue.id,
+      comments.agentFailureQuarantineReconciled({
+        failureCount: status.failureCount,
+        totalFailureCount: status.totalFailureCount,
+        agentFailedLabel: policy.agentFailedLabel,
+      })
+    );
   }
 
   return status;
