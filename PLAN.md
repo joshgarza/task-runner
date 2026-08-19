@@ -14,7 +14,7 @@ This plan reflects the current task-runner architecture, the dashboard Codex SDK
 - `task-runner` must keep working from the `main` worktree because cron wrappers run from `/home/josh/coding/claude/task-runner/main`.
 - Cron wrappers must keep explicit start and finish logging with captured exit codes.
 - The active runtime must have the Codex SDK dependency installed in the exact worktree cron uses.
-- Codex supports `model` and `modelReasoningEffort`, but it does not expose Claude-style `allowedTools`, `maxTurns`, or `maxBudgetUsd` in the same way.
+- Codex supports `model` and `modelReasoningEffort`, but it does not expose Claude-style `allowedTools` in the same way.
 
 ## PR 1: Cron Hardening
 

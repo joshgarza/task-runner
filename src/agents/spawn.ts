@@ -64,8 +64,6 @@ export interface SpawnOptions {
   cwd: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  maxTurns: number;
-  maxBudgetUsd: number;
   toolsFile?: string; // legacy compatibility only
   agentType?: string;
   timeoutMs: number;
@@ -88,12 +86,9 @@ function resolveNetworkAccess(agentType?: string): boolean {
 
 /**
  * Codex does not support the previous allowedTools model. Keep the registry
- * lookup for agent existence and compatibility caps while enforcing isolation
- * through sandbox mode.
+ * lookup for agent existence while enforcing isolation through sandbox mode.
  */
 function resolveSpawnProfile(opts: SpawnOptions): {
-  maxTurns: number;
-  maxBudgetUsd: number;
   sandboxMode: SandboxMode;
   networkAccessEnabled: boolean;
 } {
@@ -101,8 +96,6 @@ function resolveSpawnProfile(opts: SpawnOptions): {
     const registry = loadRegistry();
     const resolved = resolveAgentType(opts.agentType, registry);
     return {
-      maxTurns: Math.min(opts.maxTurns, resolved.maxTurns),
-      maxBudgetUsd: Math.min(opts.maxBudgetUsd, resolved.maxBudgetUsd),
       sandboxMode: resolveSandboxMode(resolved.name),
       networkAccessEnabled: resolveNetworkAccess(resolved.name),
     };
@@ -110,8 +103,6 @@ function resolveSpawnProfile(opts: SpawnOptions): {
 
   if (opts.toolsFile) {
     return {
-      maxTurns: opts.maxTurns,
-      maxBudgetUsd: opts.maxBudgetUsd,
       sandboxMode: "workspace-write",
       networkAccessEnabled: false,
     };
@@ -124,14 +115,13 @@ function resolveSpawnProfile(opts: SpawnOptions): {
  * Run an agent turn through the Codex SDK.
  */
 export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
-  const { maxTurns, maxBudgetUsd, sandboxMode, networkAccessEnabled } = resolveSpawnProfile(opts);
+  const { sandboxMode, networkAccessEnabled } = resolveSpawnProfile(opts);
   const agentLabel = opts.agentType ? `[${opts.agentType}]` : `[${opts.toolsFile}]`;
 
   log(
     "INFO",
     opts.context,
-    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled} ${agentLabel} ` +
-    `(turn-cap=${maxTurns}, budget-cap=$${maxBudgetUsd}; compatibility only)`
+    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled} ${agentLabel}`
   );
 
   const startTime = Date.now();

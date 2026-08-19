@@ -84,7 +84,7 @@ function validateRegistry(registry: AgentRegistry): void {
 
 /**
  * Resolve an agent type by name: merge parent tools if `extends` is set,
- * deduplicate, and return the final tool list + caps.
+ * deduplicate, and return the final tool list.
  */
 export function resolveAgentType(
   name: string,
@@ -110,8 +110,6 @@ export function resolveAgentType(
     name,
     description: def.description,
     tools,
-    maxBudgetUsd: def.maxBudgetUsd,
-    maxTurns: def.maxTurns,
     audit: def.audit,
   };
 }

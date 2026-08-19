@@ -197,8 +197,6 @@ export async function refineTickets(
       cwd: agentCwd,
       model: config.defaults.contextModel,
       reasoningEffort: config.defaults.contextReasoningEffort,
-      maxTurns: config.defaults.contextMaxTurns,
-      maxBudgetUsd: config.defaults.contextMaxBudgetUsd,
       agentType: "context",
       timeoutMs: config.defaults.agentTimeoutMs,
       context: `refine-${issue.identifier}`,

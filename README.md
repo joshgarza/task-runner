@@ -67,12 +67,8 @@ Edit `task-runner.config.json` to map Linear projects to repos:
   "defaults": {
     "model": "gpt-5.4",
     "reasoningEffort": "high",
-    "maxTurns": 50,
-    "maxBudgetUsd": 10.00,
     "reviewModel": "gpt-5.4",
     "reviewReasoningEffort": "high",
-    "reviewMaxTurns": 15,
-    "reviewMaxBudgetUsd": 2.00,
     "contextModel": "gpt-5.4",
     "contextReasoningEffort": "medium",
     "maxAttempts": 2,

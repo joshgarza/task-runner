@@ -26,16 +26,10 @@ export interface LinearConfig {
 export interface DefaultsConfig {
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  maxTurns: number;
-  maxBudgetUsd: number;
   reviewModel: string;
   reviewReasoningEffort: ModelReasoningEffort;
-  reviewMaxTurns: number;
-  reviewMaxBudgetUsd: number;
   contextModel: string;
   contextReasoningEffort: ModelReasoningEffort;
-  contextMaxTurns: number;
-  contextMaxBudgetUsd: number;
   maxAttempts: number;
   agentTimeoutMs: number;
   drainConcurrency: number;
@@ -102,8 +96,6 @@ export interface ValidationResult {
 export interface RunOptions {
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
-  maxTurns?: number;
-  maxBudgetUsd?: number;
   maxAttempts?: number;
   dryRun?: boolean;
 }
@@ -180,8 +172,6 @@ export interface AgentTypeDefinition {
   description: string;
   extends?: string; // single-level inheritance from another type
   tools: string[];
-  maxBudgetUsd: number;
-  maxTurns: number;
   audit: AgentTypeAudit;
 }
 
@@ -189,8 +179,6 @@ export interface ResolvedAgentType {
   name: string;
   description: string;
   tools: string[]; // fully resolved (parent + child, deduplicated)
-  maxBudgetUsd: number;
-  maxTurns: number;
   audit: AgentTypeAudit;
 }
 
@@ -213,8 +201,6 @@ export interface AgentProposal {
   baseAgentType: string;
   proposedAgentType: string;
   proposedTools: string[];
-  proposedMaxBudgetUsd: number;
-  proposedMaxTurns: number;
   failureAnalysis: FailureAnalysis;
   status: "pending" | "approved" | "rejected";
   rejectionReason?: string;

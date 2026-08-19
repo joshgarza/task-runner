@@ -113,22 +113,16 @@ export function loadConfig(): TaskRunnerConfig {
     defaults: {
       model: defaultModel,
       reasoningEffort: defaultReasoningEffort,
-      maxTurns: raw.defaults?.maxTurns ?? 50,
-      maxBudgetUsd: raw.defaults?.maxBudgetUsd ?? 10.0,
       reviewModel: resolveModel(raw.defaults?.reviewModel, defaultModel),
       reviewReasoningEffort: resolveReasoningEffort(
         raw.defaults?.reviewReasoningEffort,
         defaultReasoningEffort
       ),
-      reviewMaxTurns: raw.defaults?.reviewMaxTurns ?? 15,
-      reviewMaxBudgetUsd: raw.defaults?.reviewMaxBudgetUsd ?? 2.0,
       contextModel: resolveModel(raw.defaults?.contextModel, defaultModel),
       contextReasoningEffort: resolveReasoningEffort(
         raw.defaults?.contextReasoningEffort,
         "medium"
       ),
-      contextMaxTurns: raw.defaults?.contextMaxTurns ?? 10,
-      contextMaxBudgetUsd: raw.defaults?.contextMaxBudgetUsd ?? 0.5,
       maxAttempts: raw.defaults?.maxAttempts ?? 2,
       agentTimeoutMs: raw.defaults?.agentTimeoutMs ?? 900_000,
       drainConcurrency: raw.defaults?.drainConcurrency ?? 1,

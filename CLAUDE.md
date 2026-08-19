@@ -276,11 +276,7 @@ src/
   },
   "defaults": {
     "model": "gpt-5.4",
-    "maxTurns": 50,
-    "maxBudgetUsd": 10.00,
     "reviewModel": "gpt-5.4",
-    "reviewMaxTurns": 15,
-    "reviewMaxBudgetUsd": 2.00,
     "maxAttempts": 2,
     "agentTimeoutMs": 900000
   },

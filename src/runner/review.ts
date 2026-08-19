@@ -77,8 +77,6 @@ Approve if: tests pass, lint passes, no critical issues, at most 2 major issues.
     cwd: projectConfig.repoPath,
     model: config.defaults.reviewModel,
     reasoningEffort: config.defaults.reviewReasoningEffort,
-    maxTurns: config.defaults.reviewMaxTurns,
-    maxBudgetUsd: config.defaults.reviewMaxBudgetUsd,
     agentType: "reviewer",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `review-${prNumber}`,
