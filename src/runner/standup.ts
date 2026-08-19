@@ -9,18 +9,30 @@ interface StandupOptions {
   project?: string;
 }
 
-export async function standup(options: StandupOptions = {}): Promise<void> {
-  const config = loadConfig();
+type RecentActivityFetcher = typeof fetchRecentActivity;
+
+export async function standup(
+  options: StandupOptions = {},
+  fetchActivity: RecentActivityFetcher = fetchRecentActivity
+): Promise<void> {
   const days = options.days ?? 1;
 
   log("INFO", "standup", `Generating digest for last ${days} day(s)...`);
 
-  const issues = await fetchRecentActivity(days, options.project);
+  let issues: Awaited<ReturnType<RecentActivityFetcher>>;
+  try {
+    issues = await fetchActivity(days, options.project);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to query Linear activity: ${detail}`, { cause: error });
+  }
 
   if (issues.length === 0) {
     console.log("\nNo activity in the last " + days + " day(s).");
     return;
   }
+
+  const config = loadConfig();
 
   // Group by state
   const groups: Record<string, typeof issues> = {};

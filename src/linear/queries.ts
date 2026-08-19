@@ -346,20 +346,34 @@ export async function fetchForwardBlockCount(issueId: string): Promise<number> {
 /**
  * Fetch recent activity for standup digest
  */
-export async function fetchRecentActivity(
-  days: number,
-  projectName?: string
-): Promise<LinearIssue[]> {
-  const client = getLinearClient();
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+interface RecentActivityFilter {
+  updatedAt: { gte: string };
+  project?: { name: { eq: string } };
+}
 
-  const filter: any = {
+export function buildRecentActivityFilter(
+  days: number,
+  projectName?: string,
+  now: number = Date.now()
+): RecentActivityFilter {
+  const since = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
+  const filter: RecentActivityFilter = {
     updatedAt: { gte: since },
   };
 
   if (projectName) {
     filter.project = { name: { eq: projectName } };
   }
+
+  return filter;
+}
+
+export async function fetchRecentActivity(
+  days: number,
+  projectName?: string
+): Promise<LinearIssue[]> {
+  const client = getLinearClient();
+  const filter = buildRecentActivityFilter(days, projectName);
 
   const issues = await client.issues({
     filter,
