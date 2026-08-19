@@ -410,18 +410,19 @@ export async function postPRLink(
   teamKey: string,
   prUrl: string,
   existingDescription: string | null,
-  context: string
+  context: string,
+  deps: PostPRLinkDependencies = defaultPostPRLinkDependencies
 ): Promise<void> {
   const maxRetries = 2;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await addComment(issueId, `🤖 PR created: ${prUrl}`);
+      await deps.addComment(issueId, `🤖 PR created: ${prUrl}`);
       return; // success
     } catch (err: any) {
-      log("WARN", context, `addComment attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      deps.log("WARN", context, `addComment attempt ${attempt}/${maxRetries} failed: ${err.message}`);
       if (attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, 1000));
+        await deps.delay(1000);
       }
     }
   }
@@ -429,14 +430,28 @@ export async function postPRLink(
   // Fallback: append PR URL to issue description
   try {
     const desc = existingDescription ?? "";
-    await updateIssue(issueId, teamKey, {
+    await deps.updateIssue(issueId, teamKey, {
       description: desc + `\n\nPR: ${prUrl}`,
     });
-    log("INFO", context, "Persisted PR URL via issue description fallback");
+    deps.log("INFO", context, "Persisted PR URL via issue description fallback");
   } catch (err: any) {
-    log("WARN", context, `Failed to persist PR URL via description fallback: ${err.message}`);
+    deps.log("WARN", context, `Failed to persist PR URL via description fallback: ${err.message}`);
   }
 }
+
+export interface PostPRLinkDependencies {
+  addComment: typeof addComment;
+  updateIssue: typeof updateIssue;
+  log: typeof log;
+  delay: (ms: number) => Promise<void>;
+}
+
+const defaultPostPRLinkDependencies: PostPRLinkDependencies = {
+  addComment,
+  updateIssue,
+  log,
+  delay: (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
+};
 
 function failure(
   issueId: string,
