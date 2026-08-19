@@ -1,11 +1,11 @@
 # PR Review Retro: PRs #45 and #46, Thin Codex Routing and Native Review
-**Date**: 2026-08-18 | **Branches**: feat/phase1-routing, feat/phase1-native-review | **Findings**: 3 P1 bugs, 7 P2 bugs
+**Date**: 2026-08-18 | **Branches**: feat/phase1-routing, feat/phase1-native-review | **Findings**: 3 P1 bugs, 8 P2 bugs
 
 ## What Was Found
 
 The Phase 1 routing work correctly made TaskRunner thinner, but review exposed several cross-system invariants that the first implementation treated as best-effort. Dependency lookup failures could let blocked work proceed, refinement could be marked complete before its routing label was durable, native review and Linear transition failures could be logged without failing the run, and pull request health could infer recency from where a link happened to be stored instead of GitHub's event chronology.
 
-The remaining findings were state-reporting variants of the same problem. Cloud-delegated work could be reported as a stale local worker, cloud completion logs could print an undefined pull request, fallback pull request links were invisible to health checks, browser-style pull request URLs were rejected, and operations refinement could retain a conflicting ready label.
+The remaining findings were state-reporting variants of the same problem. Cloud-delegated work could be reported as a stale local worker, cloud completion logs could print an undefined pull request, fallback pull request links were invisible to health checks, unrelated pull request links could veto reconciliation, browser-style pull request URLs were rejected, and operations refinement could retain a conflicting ready label.
 
 ## Root Cause
 
@@ -20,7 +20,7 @@ The remaining findings were state-reporting variants of the same problem. Cloud-
 - Cloud delegation is excluded from local stale-worker warnings and uses route-aware completion logging.
 - Native Codex review requests and the transition to In Review are required postconditions. Failures keep the issue retryable and preserve the pull request and branch for recovery.
 - Pull request links are normalized from common GitHub browser variants and discovered in both issue descriptions and comments.
-- Pull request health queries GitHub metadata for every unique linked pull request and selects the newest by GitHub `createdAt`. Incomplete metadata fails closed instead of guessing.
+- Pull request health considers only TaskRunner-owned link markers, queries GitHub metadata for every unique runner pull request, and selects the newest by GitHub `createdAt`. Incomplete metadata for a runner-owned link fails closed instead of guessing.
 - Failure-path and ordering tests now cover each repaired invariant.
 
 ## Deferred

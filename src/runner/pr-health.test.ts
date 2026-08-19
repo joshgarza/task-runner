@@ -13,8 +13,8 @@ describe("extractPrUrls", () => {
   it("preserves comment order so reconciliation can use the newest PR", () => {
     assert.deepEqual(
       extractPrUrls([
-        "PR created: https://github.com/joshgarza/task-runner/pull/41",
-        "retry: https://github.com/joshgarza/task-runner/pull/42",
+        "🤖 PR created: https://github.com/joshgarza/task-runner/pull/41",
+        "🤖 PR created: https://github.com/joshgarza/task-runner/pull/42",
       ]),
       [
         "https://github.com/joshgarza/task-runner/pull/41",
@@ -33,7 +33,7 @@ describe("extractPrUrls", () => {
   it("returns description and comment URLs for metadata comparison", () => {
     assert.deepEqual(
       extractPrUrls(
-        ["PR created: https://github.com/joshgarza/task-runner/pull/44"],
+        ["🤖 PR created: https://github.com/joshgarza/task-runner/pull/44"],
         "PR: https://github.com/joshgarza/task-runner/pull/43"
       ),
       [
@@ -45,6 +45,19 @@ describe("extractPrUrls", () => {
 
   it("ignores comments without a GitHub pull request URL", () => {
     assert.deepEqual(extractPrUrls(["Agent starting work", "Validation passed"]), []);
+  });
+
+  it("ignores unrelated PR URLs in ticket context", () => {
+    assert.deepEqual(
+      extractPrUrls(
+        [
+          "🤖 PR created: https://github.com/joshgarza/task-runner/pull/43",
+          "Compare with https://github.com/private/example/pull/99 before implementing",
+        ],
+        "Prior art: https://github.com/other/example/pull/100"
+      ),
+      ["https://github.com/joshgarza/task-runner/pull/43"]
+    );
   });
 });
 

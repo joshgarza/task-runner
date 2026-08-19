@@ -30,23 +30,33 @@ export interface PrSnapshot {
   createdAt: string;
 }
 
-const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
+const RUNNER_COMMENT_PR_REGEX =
+  /(?:^|\n)🤖 PR created:\s*(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)(?=\s|$)/g;
+const RUNNER_DESCRIPTION_PR_REGEX =
+  /(?:^|\n)PR:\s*(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)(?=\s|$)/g;
 
 /**
- * Extract PR URLs from the issue description fallback and comments.
- * Matches the formats written by run-issue.ts.
+ * Extract only the PR URL markers written by run-issue.ts.
+ * Other PR URLs may be ordinary ticket context and must not veto reconciliation.
  */
 export function extractPrUrls(
   comments: string[],
   description: string | null = null
 ): string[] {
   const urls: string[] = [];
-  const sources = description ? [description, ...comments] : comments;
-  for (const source of sources) {
-    for (const match of source.matchAll(PR_URL_REGEX)) {
-      urls.push(match[0]);
+
+  if (description) {
+    for (const match of description.matchAll(RUNNER_DESCRIPTION_PR_REGEX)) {
+      urls.push(match[1]);
     }
   }
+
+  for (const comment of comments) {
+    for (const match of comment.matchAll(RUNNER_COMMENT_PR_REGEX)) {
+      urls.push(match[1]);
+    }
+  }
+
   return urls;
 }
 
