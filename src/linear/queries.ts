@@ -116,8 +116,11 @@ export async function fetchAgentReadyIssues(
   labelName: string,
   stateNames: string | string[],
   projectName?: string,
-  excludedLabelName?: string
+  excludedLabelName?: string,
+  maxResults?: number
 ): Promise<LinearIssue[]> {
+  if (maxResults !== undefined && maxResults <= 0) return [];
+
   const client = getLinearClient();
 
   const filter = buildAgentReadyIssueFilter(
@@ -129,9 +132,9 @@ export async function fetchAgentReadyIssues(
 
   const issues = await client.issues({
     filter,
-    first: 50,
+    first: Math.min(maxResults ?? 50, 50),
   });
-  const allIssues = await collectAllNodes(issues);
+  const allIssues = await collectAllNodes(issues, maxResults);
 
   const results: LinearIssue[] = [];
   for (const issue of allIssues) {

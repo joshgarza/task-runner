@@ -97,6 +97,11 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     // Query both Todo and Backlog — matches the valid states in run-issue.ts
     const allIssues: LinearIssue[] = [];
     for (const projectName of projectNames) {
+      if (allIssues.length >= limit) {
+        log("INFO", null, `Reached limit (${limit}), stopping fetch`);
+        break;
+      }
+
       log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
 
       let issues;
@@ -105,7 +110,8 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
           label,
           fetchStates,
           projectName,
-          config.linear.agentFailedLabel
+          config.linear.agentFailedLabel,
+          limit - allIssues.length
         );
       } catch (err: any) {
         log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
@@ -124,10 +130,6 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
         allIssues.push(issue);
       }
 
-      if (allIssues.length >= limit) {
-        log("INFO", null, `Reached limit (${limit}), stopping fetch`);
-        break;
-      }
     }
 
     // Dry runs report queue removals but never mutate Linear.
