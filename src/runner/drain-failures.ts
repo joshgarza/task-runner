@@ -1,6 +1,6 @@
 import { resolveExecutionRoute } from "../execution-route.ts";
 import { applyLabelChanges, resolveTeamLabels } from "../linear/labels.ts";
-import { addComment } from "../linear/mutations.ts";
+import { addComment, createLabel } from "../linear/mutations.ts";
 import * as comments from "../linear/comments.ts";
 import type { LinearIssue, TaskRunnerConfig } from "../types.ts";
 
@@ -14,6 +14,7 @@ export interface DrainFailurePolicy {
 
 export interface DrainFailureStatus {
   applies: boolean;
+  isLocal: boolean;
   hasAgentFailedLabel: boolean;
   totalFailureCount: number;
   acknowledgedFailureCount: number;
@@ -25,12 +26,14 @@ export interface DrainFailureDependencies {
   resolveTeamLabels: typeof resolveTeamLabels;
   applyLabelChanges: typeof applyLabelChanges;
   addComment: typeof addComment;
+  createLabel: typeof createLabel;
 }
 
 const defaultDependencies: DrainFailureDependencies = {
   resolveTeamLabels,
   applyLabelChanges,
   addComment,
+  createLabel,
 };
 
 export function getDrainFailurePolicy(config: TaskRunnerConfig): DrainFailurePolicy {
@@ -79,6 +82,7 @@ export function getDrainFailureStatus(
 
   return {
     applies,
+    isLocal,
     hasAgentFailedLabel,
     totalFailureCount,
     acknowledgedFailureCount,
@@ -98,10 +102,17 @@ export async function quarantineDrainFailure(
   if (!status.shouldQuarantine || dryRun) return status;
 
   const teamLabels = await deps.resolveTeamLabels(issue.teamKey);
-  for (const label of [policy.agentLabel, policy.agentFailedLabel]) {
-    if (!teamLabels.has(label)) {
-      throw new Error(`Label "${label}" not found in team ${issue.teamKey}`);
-    }
+  if (!teamLabels.has(policy.agentLabel)) {
+    throw new Error(`Label "${policy.agentLabel}" not found in team ${issue.teamKey}`);
+  }
+
+  if (!teamLabels.has(policy.agentFailedLabel)) {
+    const created = await deps.createLabel({
+      name: policy.agentFailedLabel,
+      teamKey: issue.teamKey,
+      description: "Requires human triage before returning to the agent queue",
+    });
+    teamLabels.set(created.name, created.id);
   }
 
   await deps.applyLabelChanges(
@@ -111,15 +122,35 @@ export async function quarantineDrainFailure(
     [policy.agentLabel],
     false
   );
-  await deps.addComment(
-    issue.id,
-    comments.agentFailureQuarantined({
-      failureCount: status.failureCount,
-      totalFailureCount: status.totalFailureCount,
-      agentLabel: policy.agentLabel,
-      agentFailedLabel: policy.agentFailedLabel,
-    })
-  );
+  const quarantineComment = comments.agentFailureQuarantined({
+    failureCount: status.failureCount,
+    totalFailureCount: status.totalFailureCount,
+    agentLabel: policy.agentLabel,
+    agentFailedLabel: policy.agentFailedLabel,
+  });
+
+  try {
+    await deps.addComment(issue.id, quarantineComment);
+  } catch (firstError) {
+    try {
+      await deps.addComment(issue.id, quarantineComment);
+    } catch (secondError) {
+      try {
+        await deps.applyLabelChanges(
+          issue.id,
+          teamLabels,
+          [policy.agentLabel],
+          [policy.agentFailedLabel],
+          false
+        );
+      } catch (compensationError) {
+        throw new Error(
+          `Failed to post quarantine marker and restore queue labels: ${String(secondError)}; compensation failed: ${String(compensationError)}`
+        );
+      }
+      throw secondError;
+    }
+  }
 
   return status;
 }

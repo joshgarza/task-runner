@@ -111,7 +111,7 @@ export async function runIssue(
   // Permanently failed local queue items require human triage before another
   // unattended run. Direct runs retain this guard in case drain state changed
   // between its initial fetch and execution.
-  if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.applies) {
+  if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.isLocal) {
     return failure(
       identifier,
       `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${config.linear.agentLabel}" after human triage.`,
@@ -445,8 +445,11 @@ async function rollbackInProgress(
 ): Promise<void> {
   if (!transitioned || !issue) return;
   try {
-    await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
+    // Record the countable failure before making the issue drain-eligible
+    // again. If the comment cannot be written, leave the issue In Progress so
+    // a later drain cannot retry it without a recorded failure.
     await addComment(issue.id, comments.rollback({ error, attempts }));
+    await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
     log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
   } catch (err: any) {
     log("WARN", identifier, `Failed to roll back issue state: ${err.message}`);

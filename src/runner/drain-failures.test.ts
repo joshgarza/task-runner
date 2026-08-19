@@ -128,6 +128,7 @@ describe("drain failure detection", () => {
       addComment: async (...args: any[]) => {
         commentCalls.push(args);
       },
+      createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
     });
 
     assert.equal(labelCalls.length, 1);
@@ -166,10 +167,97 @@ describe("drain failure detection", () => {
       addComment: async () => {
         called = true;
       },
+      createLabel: async () => {
+        called = true;
+        return { name: "agent-failed", id: "failed-id" };
+      },
     });
 
     assert.equal(status.shouldQuarantine, true);
     assert.equal(called, false);
+  });
+
+  it("recognizes a quarantined local issue without the queue label", () => {
+    const status = getDrainFailureStatus(
+      { labels: ["agent-failed", "execution:local"], comments: [] },
+      policy
+    );
+
+    assert.equal(status.isLocal, true);
+    assert.equal(status.applies, false);
+    assert.equal(status.hasAgentFailedLabel, true);
+  });
+
+  it("creates the configured quarantine label when it is missing", async () => {
+    const created: any[] = [];
+    const issue = {
+      id: "issue-1",
+      teamKey: "JOS",
+      labels: ["agent-ready", "execution:local"],
+      comments: [
+        "🤖 Agent failed, rolled back to Todo",
+        "🤖 Agent failed, rolled back to Todo",
+      ],
+    };
+
+    await quarantineDrainFailure(issue, policy, false, {
+      resolveTeamLabels: async () => new Map([["agent-ready", "ready-id"]]),
+      applyLabelChanges: async () => ({
+        labelsAdded: ["agent-failed"],
+        labelsRemoved: ["agent-ready"],
+      }),
+      addComment: async () => {},
+      createLabel: async (opts: any) => {
+        created.push(opts);
+        return { name: opts.name, id: "failed-id" };
+      },
+    });
+
+    assert.deepEqual(created, [{
+      name: "agent-failed",
+      teamKey: "JOS",
+      description: "Requires human triage before returning to the agent queue",
+    }]);
+  });
+
+  it("restores queue labels when the quarantine marker cannot be posted", async () => {
+    const labelCalls: any[] = [];
+    let commentAttempts = 0;
+    const issue = {
+      id: "issue-1",
+      teamKey: "JOS",
+      labels: ["agent-ready", "execution:local"],
+      comments: [
+        "🤖 Agent failed, rolled back to Todo",
+        "🤖 Agent failed, rolled back to Todo",
+      ],
+    };
+
+    await assert.rejects(
+      quarantineDrainFailure(issue, policy, false, {
+        resolveTeamLabels: async () => new Map([
+          ["agent-ready", "ready-id"],
+          ["agent-failed", "failed-id"],
+        ]),
+        applyLabelChanges: async (...args: any[]) => {
+          labelCalls.push(args);
+          return { labelsAdded: [], labelsRemoved: [] };
+        },
+        addComment: async () => {
+          commentAttempts += 1;
+          throw new Error("comment unavailable");
+        },
+        createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
+      }),
+      /comment unavailable/
+    );
+
+    assert.equal(commentAttempts, 2);
+    assert.deepEqual(labelCalls[1].slice(2), [
+      ["agent-ready"],
+      ["agent-failed"],
+      false,
+    ]);
   });
 });
 
