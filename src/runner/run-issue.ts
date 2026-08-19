@@ -9,16 +9,26 @@ import { transitionIssue, addComment, createChildIssue, updateIssue } from "../l
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment, getCommitStats } from "../git/branch.ts";
+import { getGitHubRepository } from "../git/remote.ts";
 import * as comments from "../linear/comments.ts";
-import { spawnAgent } from "../agents/spawn.ts";
-import { loadRegistry } from "../agents/registry.ts";
-import { dispatch } from "../agents/dispatcher.ts";
-import { analyzeFailure } from "../agents/failure-analysis.ts";
-import { createProposal } from "../agents/proposals.ts";
+import { runLocalCodex } from "../agents/spawn.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
 import { buildReviewPrompt, REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
-import type { RunOptions, RunResult, ReviewVerdict } from "../types.ts";
+import {
+  buildCloudDelegationComment,
+  isHumanGatedRoute,
+  resolveExecutionRoute,
+} from "../execution-route.ts";
+import type { ExecutionRoute } from "../execution-route.ts";
+import type {
+  LinearIssue,
+  ProjectConfig,
+  RunOptions,
+  RunResult,
+  ReviewVerdict,
+  TaskRunnerConfig,
+} from "../types.ts";
 
 export async function runIssue(
   identifier: string,
@@ -44,11 +54,21 @@ export async function runIssue(
     return failure(identifier, `Failed to fetch issue: ${err.message}`, startTime, 0);
   }
 
+  let executionRoute: ExecutionRoute;
+  try {
+    const resolution = resolveExecutionRoute(issue.labels);
+    executionRoute = resolution.route;
+    log("INFO", identifier, `Execution route: ${executionRoute} (${resolution.reason})`);
+  } catch (err: any) {
+    return failure(identifier, `Invalid execution routing: ${err.message}`, startTime, 0);
+  }
+
   if (options.dryRun) {
-    log("INFO", identifier, "Dry run — stopping after fetch");
+    log("INFO", identifier, `Dry run — stopping after fetch and route resolution (${executionRoute})`);
     return {
       issueId: identifier,
       success: true,
+      executionRoute,
       durationMs: Date.now() - startTime,
       attempts: 0,
     };
@@ -65,11 +85,14 @@ export async function runIssue(
     );
   }
 
-  // 2.3. Reject tickets requiring human approval
-  if (issue.labels.includes(config.linear.needsApprovalLabel)) {
+  // 2.3. Reject tickets requiring human approval or human-gated ops.
+  if (issue.labels.includes(config.linear.needsApprovalLabel) || isHumanGatedRoute(executionRoute)) {
+    const reason = isHumanGatedRoute(executionRoute)
+      ? `Execution route "${executionRoute}" is human-gated and cannot run unattended`
+      : `Issue has "${config.linear.needsApprovalLabel}" label — requires human approval before Codex can proceed`;
     return failure(
       identifier,
-      `Issue has "${config.linear.needsApprovalLabel}" label — requires human approval before agent can proceed`,
+      reason,
       startTime,
       0
     );
@@ -105,18 +128,17 @@ export async function runIssue(
     return failure(identifier, err.message, startTime, 0);
   }
 
-  // 4. Dispatch: select agent type from registry based on issue labels
-  const registry = loadRegistry();
-  const dispatchResult = dispatch(issue, registry);
-  log("INFO", identifier, `Dispatch: ${dispatchResult.agentType} (${dispatchResult.reason})`);
+  if (executionRoute === "cloud") {
+    return delegateCloudIssue(issue, projectConfig, config, startTime);
+  }
 
-  // 5. Transition to In Progress
+  // 4. Transition local work to In Progress
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
     await addComment(issue.id, comments.startWork({
       identifier: issue.identifier,
       title: issue.title,
-      agentType: dispatchResult.agentType,
+      executionRoute,
       model,
       reasoningEffort,
       maxAttempts,
@@ -153,12 +175,12 @@ export async function runIssue(
         prompt = `IMPORTANT: A previous attempt failed with the following errors. Fix these issues:\n\n${lastError}\n\n---\n\n${prompt}`;
       }
 
-      const agentResult = await spawnAgent({
+      const agentResult = await runLocalCodex({
         prompt,
         cwd: worktreePath,
         model,
         reasoningEffort,
-        agentType: dispatchResult.agentType,
+        profile: "write",
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
       });
@@ -170,7 +192,7 @@ export async function runIssue(
         JSON.stringify(
           {
             issue: { identifier, title: issue.title },
-            agentType: dispatchResult.agentType,
+            executionRoute,
             output: agentResult.output.slice(0, 50_000),
             stderr: agentResult.stderr.slice(0, 5_000),
             durationMs: agentResult.durationMs,
@@ -185,29 +207,6 @@ export async function runIssue(
       if (!agentResult.success) {
         lastError = `Agent exited with code ${agentResult.exitCode}. stderr: ${agentResult.stderr.slice(0, 1000)}`;
         log("ERROR", identifier, `Agent failed: ${lastError.slice(0, 200)}`);
-
-        // 6.5. Failure analysis: check if this is a permission issue
-        const analysis = analyzeFailure(agentResult.output, agentResult.stderr);
-        if (analysis.category === "permission_denied") {
-          log("WARN", identifier, `Permission denied — creating proposal for capability escalation`);
-          try {
-            const proposal = await createProposal({
-              issue,
-              baseAgentType: dispatchResult.agentType,
-              failureAnalysis: analysis,
-              config,
-            });
-            log("INFO", identifier, `Created proposal ${proposal.id} — ticket needs human approval`);
-          } catch (err: any) {
-            log("WARN", identifier, `Failed to create proposal: ${err.message}`);
-          }
-          return failure(
-            identifier,
-            `Permission denied: agent type "${dispatchResult.agentType}" lacks required capabilities. Proposal created for human approval.`,
-            startTime,
-            attempts
-          );
-        }
 
         continue;
       }
@@ -320,6 +319,7 @@ export async function runIssue(
     return {
       issueId: identifier,
       success: true,
+      executionRoute,
       prUrl,
       reviewVerdict: verdict,
       durationMs: Date.now() - startTime,
@@ -340,6 +340,55 @@ export async function runIssue(
   }
 }
 
+async function delegateCloudIssue(
+  issue: LinearIssue,
+  projectConfig: ProjectConfig,
+  config: TaskRunnerConfig,
+  startTime: number
+): Promise<RunResult> {
+  try {
+    await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
+  } catch (err: any) {
+    return failure(
+      issue.identifier,
+      `Failed to transition cloud work to ${config.linear.inProgressState}: ${err.message}`,
+      startTime,
+      0
+    );
+  }
+
+  const repository = getGitHubRepository(projectConfig.repoPath);
+  const delegationComment = buildCloudDelegationComment(repository);
+
+  try {
+    await addComment(issue.id, delegationComment);
+  } catch (err: any) {
+    await rollbackInProgress(
+      true,
+      issue,
+      config,
+      issue.identifier,
+      `Failed to delegate cloud work: ${err.message}`,
+      0
+    );
+    return failure(
+      issue.identifier,
+      `Failed to delegate cloud work: ${err.message}`,
+      startTime,
+      0
+    );
+  }
+
+  log("OK", issue.identifier, `Delegated to Codex cloud${repository ? ` for ${repository}` : ""}`);
+  return {
+    issueId: issue.identifier,
+    success: true,
+    executionRoute: "cloud",
+    durationMs: Date.now() - startTime,
+    attempts: 0,
+  };
+}
+
 async function runReview(
   issue: any,
   projectConfig: any,
@@ -350,12 +399,13 @@ async function runReview(
 ): Promise<ReviewVerdict> {
   const reviewPrompt = buildReviewPrompt(issue, projectConfig, prUrl);
 
-  const reviewResult = await spawnAgent({
+  const reviewResult = await runLocalCodex({
     prompt: reviewPrompt,
     cwd: worktreePath,
     model: config.defaults.reviewModel,
     reasoningEffort: config.defaults.reviewReasoningEffort,
-    agentType: "reviewer",
+    profile: "read",
+    networkAccessEnabled: true,
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `${identifier}-review`,
     outputSchema: REVIEW_VERDICT_SCHEMA,

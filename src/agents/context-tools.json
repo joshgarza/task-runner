@@ -1,9 +1,0 @@
-{
-  "tools": [
-    "Read",
-    "Grep",
-    "Glob",
-    "Bash(ls:*)",
-    "Bash(git log:*)"
-  ]
-}

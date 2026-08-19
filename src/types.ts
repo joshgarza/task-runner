@@ -1,5 +1,7 @@
 // Shared types for the task-runner pipeline
 
+import type { ExecutionRoute } from "./execution-route.ts";
+
 // --- Configuration ---
 
 export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -111,6 +113,7 @@ export interface DrainOptions {
 export interface RunResult {
   issueId: string;
   success: boolean;
+  executionRoute?: ExecutionRoute;
   prUrl?: string;
   reviewVerdict?: ReviewVerdict;
   error?: string;
@@ -160,54 +163,6 @@ export interface ContextResult {
   acceptanceCriteria: string[];
 }
 
-// --- Agent Registry ---
-
-export interface AgentTypeAudit {
-  createdBy: string; // "system" for built-ins, "proposal:<id>" for human-approved
-  createdAt: string;
-  reason: string;
-}
-
-export interface AgentTypeDefinition {
-  description: string;
-  extends?: string; // single-level inheritance from another type
-  tools: string[];
-  audit: AgentTypeAudit;
-}
-
-export interface ResolvedAgentType {
-  name: string;
-  description: string;
-  tools: string[]; // fully resolved (parent + child, deduplicated)
-  audit: AgentTypeAudit;
-}
-
-export interface DispatchResult {
-  agentType: string;
-  reason: string;
-}
-
-export interface FailureAnalysis {
-  category: "permission_denied" | "budget_exhausted" | "timeout" | "implementation_error";
-  missingCapabilities: string[];
-  suggestedTools: string[];
-  confidence: number; // 0-1
-}
-
-export interface AgentProposal {
-  id: string;
-  issueIdentifier: string;
-  issueTitle: string;
-  baseAgentType: string;
-  proposedAgentType: string;
-  proposedTools: string[];
-  failureAnalysis: FailureAnalysis;
-  status: "pending" | "approved" | "rejected";
-  rejectionReason?: string;
-  createdAt: string;
-  resolvedAt?: string;
-}
-
 // --- Refine Tickets ---
 
 export interface RefineTicketsOptions {
@@ -220,13 +175,13 @@ export interface RefineTicketResult {
   identifier: string;
   title: string;
   action: "refined" | "skipped" | "failed";
-  agentType?: string;
+  executionRoute?: ExecutionRoute;
   dependenciesAdded?: string[];
   reason: string;
 }
 
 export interface RefineAgentOutput {
-  agentType: string;
+  executionRoute: ExecutionRoute;
   descriptionAddendum: string;
   dependencies: string[];
   relevantFiles: string[];

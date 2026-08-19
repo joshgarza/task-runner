@@ -1,5 +1,5 @@
-// Refine Linear tickets by spawning exploration agents to add codebase context,
-// agent-type labels, and blocking relations.
+// Refine Linear tickets with local Codex codebase exploration, execution
+// routing, and blocking relations.
 
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log } from "../logger.ts";
@@ -8,9 +8,9 @@ import { updateIssue, createBlockingRelation } from "../linear/mutations.ts";
 import { resolveTeamLabels } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
 import { collectAllNodes } from "../linear/labels.ts";
-import { spawnAgent } from "../agents/spawn.ts";
-import { loadRegistry, listAgentTypes } from "../agents/registry.ts";
+import { runLocalCodex } from "../agents/spawn.ts";
 import { buildRefinePrompt, REFINE_AGENT_OUTPUT_SCHEMA } from "../prompts/refine-prompt.ts";
+import { EXECUTION_ROUTES } from "../execution-route.ts";
 import type {
   RefineTicketsOptions,
   RefineTicketResult,
@@ -146,10 +146,6 @@ export async function refineTickets(
   // Build sibling identifier list (for dependency detection)
   const siblingIdentifiers = issues.map((i) => i.identifier);
 
-  // Load agent registry for available types
-  const registry = loadRegistry();
-  const agentTypes = listAgentTypes(registry).map((a) => a.name);
-
   // Determine repo path for agent cwd (if project is specified)
   let repoPath: string | undefined;
   if (opts.project) {
@@ -177,7 +173,7 @@ export async function refineTickets(
     }
 
     // Spawn exploration agent
-    const prompt = buildRefinePrompt(issue, agentTypes, siblingIdentifiers);
+    const prompt = buildRefinePrompt(issue, [...EXECUTION_ROUTES], siblingIdentifiers);
     const agentCwd = repoPath ?? process.cwd();
 
     log("INFO", issue.identifier, `${prefix}Spawning refine agent...`);
@@ -192,12 +188,12 @@ export async function refineTickets(
       continue;
     }
 
-    const agentResult = await spawnAgent({
+    const agentResult = await runLocalCodex({
       prompt,
       cwd: agentCwd,
       model: config.defaults.contextModel,
       reasoningEffort: config.defaults.contextReasoningEffort,
-      agentType: "context",
+      profile: "read",
       timeoutMs: config.defaults.agentTimeoutMs,
       context: `refine-${issue.identifier}`,
       outputSchema: REFINE_AGENT_OUTPUT_SCHEMA,
@@ -240,33 +236,35 @@ export async function refineTickets(
       log("WARN", issue.identifier, `Failed to update description: ${err.message}`);
     }
 
-    // Add agent-type label if the suggested type is valid
-    if (agentTypes.includes(output.agentType)) {
-      const agentLabel = `agent:${output.agentType}`;
+    // Replace legacy agent labels and any prior execution route with the suggested route.
+    if (EXECUTION_ROUTES.includes(output.executionRoute)) {
+      const executionLabel = `execution:${output.executionRoute}`;
       try {
-        // Add the agent-type label while preserving existing labels
         const client = getLinearClient();
         const fullIssue = await client.issue(issue.id);
         const labelsConn = await fullIssue.labels({ first: 250 });
         const allLabels = await collectAllNodes(labelsConn);
-        const currentLabelIds = allLabels.map((l: any) => l.id);
+        const retainedLabelIds = allLabels
+          .filter((label: any) =>
+            !label.name.startsWith("agent:") && !label.name.startsWith("execution:")
+          )
+          .map((label: any) => label.id);
 
-        // Resolve the agent label ID
         const teamLabels = await resolveTeamLabels(opts.team);
-        const agentLabelId = teamLabels.get(agentLabel);
+        const executionLabelId = teamLabels.get(executionLabel);
 
-        if (agentLabelId && !currentLabelIds.includes(agentLabelId)) {
+        if (executionLabelId) {
           const { setIssueLabels } = await import("../linear/mutations.ts");
-          await setIssueLabels(issue.id, [...currentLabelIds, agentLabelId]);
-          log("OK", issue.identifier, `Added label: ${agentLabel}`);
-        } else if (!agentLabelId) {
-          log("WARN", issue.identifier, `Label "${agentLabel}" not found in team ${opts.team}`);
+          await setIssueLabels(issue.id, [...retainedLabelIds, executionLabelId]);
+          log("OK", issue.identifier, `Set execution route: ${output.executionRoute}`);
+        } else {
+          log("WARN", issue.identifier, `Label "${executionLabel}" not found in team ${opts.team}`);
         }
       } catch (err: any) {
-        log("WARN", issue.identifier, `Failed to add agent-type label: ${err.message}`);
+        log("WARN", issue.identifier, `Failed to set execution route: ${err.message}`);
       }
     } else {
-      log("WARN", issue.identifier, `Agent suggested unknown type "${output.agentType}", skipping label`);
+      log("WARN", issue.identifier, `Codex suggested unknown route "${output.executionRoute}", skipping label`);
     }
 
     // Wire blocking relations from dependencies
@@ -295,9 +293,9 @@ export async function refineTickets(
       identifier: issue.identifier,
       title: issue.title,
       action: "refined",
-      agentType: output.agentType,
+      executionRoute: output.executionRoute,
       dependenciesAdded: dependenciesAdded.length > 0 ? dependenciesAdded : undefined,
-      reason: `Refined: agent-type=${output.agentType}, deps=${output.dependencies.length}, files=${output.relevantFiles.length}`,
+      reason: `Refined: execution=${output.executionRoute}, deps=${output.dependencies.length}, files=${output.relevantFiles.length}`,
     });
   }
 

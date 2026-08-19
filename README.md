@@ -1,6 +1,6 @@
 # task-runner
 
-Linear-powered agent orchestration via Codex SDK. Drop tickets into Linear, and task-runner pulls them, spins up Codex-backed agents in isolated worktrees, creates PRs, runs automated reviews, and queues approved work for human merge.
+Linear-powered Codex routing. Drop tickets into Linear, and task-runner sends normal work to local Codex in an isolated worktree, delegates optional cloud work through Codex for Linear, and keeps operations work human-gated.
 
 ## How it works
 
@@ -20,7 +20,15 @@ Linear ticket (agent-ready label, Todo state)
    You review & merge                    Next drain picks up fix ticket
 ```
 
-The runner handles all git operations (push, PR creation), agents only commit locally. Workers run in a Codex `workspace-write` sandbox, reviewers and context agents run read-only. The registry still records intended tool scope, but Codex does not enforce Claude-style `allowedTools` whitelists.
+The runner handles local git operations, validation, retries, PR creation, and Linear reconciliation. Local implementation runs use a Codex `workspace-write` sandbox. Context runs use a read-only sandbox.
+
+## Execution routing
+
+- No execution label or `execution:local`: run unattended through local Codex. Unlabeled tickets default to local for compatibility.
+- `execution:cloud`: mention `@Codex` in Linear to start a native Codex cloud chat for the repository.
+- `execution:ops`: never run unattended. TaskRunner fails closed and leaves the ticket for a human.
+
+Unknown or conflicting `execution:*` labels also fail closed.
 
 ## Setup
 

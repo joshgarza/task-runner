@@ -15,9 +15,7 @@ import { listTickets } from "./runner/list-tickets.ts";
 import { organizeTickets } from "./runner/organize-tickets.ts";
 import { prHealth } from "./runner/pr-health.ts";
 import { refineTickets } from "./runner/refine-tickets.ts";
-import { loadRegistry, listAgentTypes, resolveAgentType } from "./agents/registry.ts";
-import { listProposals, approveProposal, rejectProposal, getProposal } from "./agents/proposals.ts";
-import { loadConfig, detectProjectFromCwd } from "./config.ts";
+import { detectProjectFromCwd } from "./config.ts";
 import { log } from "./logger.ts";
 import type { ModelReasoningEffort } from "./types.ts";
 
@@ -34,7 +32,7 @@ function parseReasoningEffort(value: string): ModelReasoningEffort {
 
 program
   .name("task-runner")
-  .description("Linear-powered agent orchestration via Codex SDK")
+  .description("Linear-powered routing for local and cloud Codex execution")
   .version("0.1.0");
 
 program
@@ -362,7 +360,7 @@ program
 
 program
   .command("refine-tickets")
-  .description("Refine Linear tickets with codebase context, agent-type labels, and blocking relations")
+  .description("Refine Linear tickets with codebase context, execution routing, and blocking relations")
   .option("--team <key>", "Team key (e.g. JOS) — auto-detected from cwd if omitted")
   .option("--project <name>", "Linear project name to filter by")
   .option("--dry-run", "Preview which tickets would be refined without making changes")
@@ -388,8 +386,8 @@ program
       for (const r of results) {
         const icon = r.action === "refined" ? "[+]" : r.action === "skipped" ? "[-]" : "[!]";
         const deps = r.dependenciesAdded?.length ? ` (deps: ${r.dependenciesAdded.join(", ")})` : "";
-        const agent = r.agentType ? ` [${r.agentType}]` : "";
-        console.log(`${icon} ${r.identifier}: ${r.title}${agent}${deps}`);
+        const route = r.executionRoute ? ` [${r.executionRoute}]` : "";
+        console.log(`${icon} ${r.identifier}: ${r.title}${route}${deps}`);
         console.log(`    ${r.reason}`);
       }
 
@@ -401,109 +399,6 @@ program
       if (failed > 0) process.exit(1);
     } catch (err: any) {
       log("ERROR", "refine", `Failed: ${err.message}`);
-      process.exit(1);
-    }
-  });
-
-program
-  .command("list-agents")
-  .description("Show all registered agent types")
-  .option("--verbose", "Show full tool list for each agent type")
-  .action((opts) => {
-    try {
-      const registry = loadRegistry();
-      const types = listAgentTypes(registry);
-
-      console.log("\n--- Agent Types ---\n");
-      for (const agent of types) {
-        console.log(`  ${agent.name}`);
-        console.log(`    ${agent.description}`);
-        console.log(`    Declared tools: ${agent.tools.length}`);
-        console.log(`    Created by: ${agent.audit.createdBy}`);
-        if (opts.verbose) {
-          console.log(`    Tools list:`);
-          for (const tool of agent.tools) {
-            console.log(`      - ${tool}`);
-          }
-        }
-        console.log();
-      }
-      console.log(`Total: ${types.length} agent types`);
-    } catch (err: any) {
-      log("ERROR", "list-agents", `Failed: ${err.message}`);
-      process.exit(1);
-    }
-  });
-
-program
-  .command("pending-proposals")
-  .description("List agent type proposals awaiting human approval")
-  .option("--all", "Show all proposals (including resolved)")
-  .action((opts) => {
-    try {
-      const proposals = opts.all ? listProposals() : listProposals("pending");
-
-      if (proposals.length === 0) {
-        console.log("\nNo pending proposals.");
-        return;
-      }
-
-      console.log("\n--- Proposals ---\n");
-      for (const p of proposals) {
-        const statusIcon = p.status === "pending" ? "[?]" : p.status === "approved" ? "[+]" : "[-]";
-        console.log(`  ${statusIcon} ${p.id}`);
-        console.log(`    Issue: ${p.issueIdentifier} — ${p.issueTitle}`);
-        console.log(`    Base type: ${p.baseAgentType} → Proposed: ${p.proposedAgentType}`);
-        console.log(`    Missing: ${p.failureAnalysis.missingCapabilities.join(", ") || "unknown"}`);
-        console.log(`    Created: ${p.createdAt}`);
-        if (p.status !== "pending") {
-          console.log(`    Status: ${p.status}${p.rejectionReason ? ` (${p.rejectionReason})` : ""}`);
-        }
-        console.log();
-      }
-
-      const pending = proposals.filter((p) => p.status === "pending").length;
-      console.log(`Total: ${proposals.length} proposals (${pending} pending)`);
-    } catch (err: any) {
-      log("ERROR", "pending-proposals", `Failed: ${err.message}`);
-      process.exit(1);
-    }
-  });
-
-program
-  .command("approve-agent <id>")
-  .description("Approve or reject an agent type proposal")
-  .option("--reject", "Reject the proposal instead of approving")
-  .option("--reason <text>", "Reason for rejection (required with --reject)")
-  .action(async (id: string, opts) => {
-    try {
-      // Show proposal details first
-      const proposal = getProposal(id);
-      console.log(`\nProposal: ${proposal.id}`);
-      console.log(`Issue: ${proposal.issueIdentifier} — ${proposal.issueTitle}`);
-      console.log(`Base type: ${proposal.baseAgentType}`);
-      console.log(`Proposed type: ${proposal.proposedAgentType}`);
-      console.log(`Proposed tools:`);
-      for (const tool of proposal.proposedTools) {
-        console.log(`  - ${tool}`);
-      }
-      console.log();
-
-      if (opts.reject) {
-        if (!opts.reason) {
-          log("ERROR", "approve-agent", "--reason is required when rejecting");
-          process.exit(1);
-        }
-        const result = await rejectProposal(id, opts.reason);
-        console.log(`Rejected proposal ${result.id}`);
-      } else {
-        const config = loadConfig();
-        const result = await approveProposal(id, config);
-        console.log(`Approved proposal ${result.id}`);
-        console.log(`New agent type "${result.proposedAgentType}" added to registry`);
-      }
-    } catch (err: any) {
-      log("ERROR", "approve-agent", `Failed: ${err.message}`);
       process.exit(1);
     }
   });

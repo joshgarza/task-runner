@@ -1,7 +1,7 @@
 {
   "name": "task-runner",
   "version": "0.1.0",
-  "description": "Linear-powered agent orchestration via Codex SDK",
+  "description": "Linear-powered routing for local and cloud Codex execution",
   "type": "module",
   "bin": {
     "task-runner": "src/cli.ts"
