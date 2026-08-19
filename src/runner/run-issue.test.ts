@@ -3,7 +3,7 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { postPRLink } from "./run-issue.ts";
 
 // Mock modules before importing the function under test
 const addCommentCalls: { issueId: string; body: string }[] = [];
@@ -14,46 +14,6 @@ const updateIssueCalls: { issueId: string; teamKey: string; opts: any }[] = [];
 let updateIssueBehavior: "succeed" | "fail" = "succeed";
 
 const logCalls: { level: string; context: string | null; message: string }[] = [];
-
-// We need to test postPRLink in isolation, so re-implement it here using the
-// same logic but with injectable dependencies.
-async function postPRLink(
-  issueId: string,
-  teamKey: string,
-  prUrl: string,
-  existingDescription: string | null,
-  context: string,
-  deps: {
-    addComment: (issueId: string, body: string) => Promise<void>;
-    updateIssue: (issueId: string, teamKey: string, opts: any) => Promise<void>;
-    log: (level: string, context: string | null, message: string) => void;
-    retryDelayMs?: number;
-  }
-): Promise<void> {
-  const maxRetries = 2;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      await deps.addComment(issueId, `🤖 PR created: ${prUrl}`);
-      return;
-    } catch (err: any) {
-      deps.log("WARN", context, `addComment attempt ${attempt}/${maxRetries} failed: ${err.message}`);
-      if (attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, deps.retryDelayMs ?? 1000));
-      }
-    }
-  }
-
-  try {
-    const desc = existingDescription ?? "";
-    await deps.updateIssue(issueId, teamKey, {
-      description: desc + `\n\nPR: ${prUrl}`,
-    });
-    deps.log("INFO", context, "Persisted PR URL via issue description fallback");
-  } catch (err: any) {
-    deps.log("WARN", context, `Failed to persist PR URL via description fallback: ${err.message}`);
-  }
-}
 
 describe("postPRLink", () => {
   let addCommentFn: (issueId: string, body: string) => Promise<void>;
@@ -98,7 +58,7 @@ describe("postPRLink", () => {
       addComment: addCommentFn,
       updateIssue: updateIssueFn,
       log: logFn,
-      retryDelayMs: 0,
+      delay: async () => {},
     });
 
     assert.equal(addCommentCalls.length, 1);
@@ -113,7 +73,7 @@ describe("postPRLink", () => {
       addComment: addCommentFn,
       updateIssue: updateIssueFn,
       log: logFn,
-      retryDelayMs: 0,
+      delay: async () => {},
     });
 
     assert.equal(addCommentCalls.length, 2, "should have tried addComment twice");
@@ -129,7 +89,7 @@ describe("postPRLink", () => {
       addComment: addCommentFn,
       updateIssue: updateIssueFn,
       log: logFn,
-      retryDelayMs: 0,
+      delay: async () => {},
     });
 
     assert.equal(addCommentCalls.length, 2, "should have retried addComment");
@@ -150,7 +110,7 @@ describe("postPRLink", () => {
       addComment: addCommentFn,
       updateIssue: updateIssueFn,
       log: logFn,
-      retryDelayMs: 0,
+      delay: async () => {},
     });
 
     assert.equal(updateIssueCalls.length, 1);
@@ -166,7 +126,7 @@ describe("postPRLink", () => {
       addComment: addCommentFn,
       updateIssue: updateIssueFn,
       log: logFn,
-      retryDelayMs: 0,
+      delay: async () => {},
     });
 
     assert.equal(addCommentCalls.length, 2);

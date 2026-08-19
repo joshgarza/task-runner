@@ -30,7 +30,7 @@ const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
  * Extract PR URLs from Linear issue comments.
  * Matches the format used by run-issue.ts: "PR created: <url>"
  */
-function extractPrUrls(comments: string[]): string[] {
+export function extractPrUrls(comments: string[]): string[] {
   const urls: string[] = [];
   for (const comment of comments) {
     const match = comment.match(PR_URL_REGEX);
