@@ -4,7 +4,7 @@
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log } from "../logger.ts";
 import { fetchIssuesByTeamAndStates, fetchIssue } from "../linear/queries.ts";
-import { updateIssue, createBlockingRelation } from "../linear/mutations.ts";
+import { updateIssue, createBlockingRelation, setIssueLabels } from "../linear/mutations.ts";
 import { resolveTeamLabels } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
 import { collectAllNodes } from "../linear/labels.ts";
@@ -222,49 +222,75 @@ export async function refineTickets(
       continue;
     }
 
-    // Update description with codebase context + refined marker
+    // Build the description, but do not persist the refined marker until the
+    // execution route has been stored successfully.
     const newDescription = buildRefinedDescription(
       issue.description,
       output.descriptionAddendum,
       output.relevantFiles
     );
 
+    if (!EXECUTION_ROUTES.includes(output.executionRoute)) {
+      const reason = `Codex suggested unknown route "${output.executionRoute}"`;
+      log("WARN", issue.identifier, reason);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "failed",
+        reason,
+      });
+      continue;
+    }
+
+    // Replace legacy agent labels and any prior execution route with the
+    // suggested route. This must succeed before the refined marker is written,
+    // otherwise an ops recommendation could be retried later as local work.
+    const executionLabel = `execution:${output.executionRoute}`;
+    try {
+      const client = getLinearClient();
+      const fullIssue = await client.issue(issue.id);
+      const labelsConn = await fullIssue.labels({ first: 250 });
+      const allLabels = await collectAllNodes(labelsConn);
+      const retainedLabelIds = allLabels
+        .filter((label: any) =>
+          !label.name.startsWith("agent:") && !label.name.startsWith("execution:")
+        )
+        .map((label: any) => label.id);
+
+      const teamLabels = await resolveTeamLabels(opts.team);
+      const executionLabelId = teamLabels.get(executionLabel);
+      if (!executionLabelId) {
+        throw new Error(`Label "${executionLabel}" not found in team ${opts.team}`);
+      }
+
+      await setIssueLabels(issue.id, [...retainedLabelIds, executionLabelId]);
+      log("OK", issue.identifier, `Set execution route: ${output.executionRoute}`);
+    } catch (err: any) {
+      const reason = `Failed to set execution route: ${err.message}`;
+      log("WARN", issue.identifier, reason);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "failed",
+        reason,
+      });
+      continue;
+    }
+
     try {
       await updateIssue(issue.id, opts.team, { description: newDescription });
       log("OK", issue.identifier, `Description updated with codebase context`);
     } catch (err: any) {
-      log("WARN", issue.identifier, `Failed to update description: ${err.message}`);
-    }
-
-    // Replace legacy agent labels and any prior execution route with the suggested route.
-    if (EXECUTION_ROUTES.includes(output.executionRoute)) {
-      const executionLabel = `execution:${output.executionRoute}`;
-      try {
-        const client = getLinearClient();
-        const fullIssue = await client.issue(issue.id);
-        const labelsConn = await fullIssue.labels({ first: 250 });
-        const allLabels = await collectAllNodes(labelsConn);
-        const retainedLabelIds = allLabels
-          .filter((label: any) =>
-            !label.name.startsWith("agent:") && !label.name.startsWith("execution:")
-          )
-          .map((label: any) => label.id);
-
-        const teamLabels = await resolveTeamLabels(opts.team);
-        const executionLabelId = teamLabels.get(executionLabel);
-
-        if (executionLabelId) {
-          const { setIssueLabels } = await import("../linear/mutations.ts");
-          await setIssueLabels(issue.id, [...retainedLabelIds, executionLabelId]);
-          log("OK", issue.identifier, `Set execution route: ${output.executionRoute}`);
-        } else {
-          log("WARN", issue.identifier, `Label "${executionLabel}" not found in team ${opts.team}`);
-        }
-      } catch (err: any) {
-        log("WARN", issue.identifier, `Failed to set execution route: ${err.message}`);
-      }
-    } else {
-      log("WARN", issue.identifier, `Codex suggested unknown route "${output.executionRoute}", skipping label`);
+      const reason = `Failed to update description: ${err.message}`;
+      log("WARN", issue.identifier, reason);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "failed",
+        executionRoute: output.executionRoute,
+        reason,
+      });
+      continue;
     }
 
     // Wire blocking relations from dependencies

@@ -4,6 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runWithConcurrency } from "../concurrency.ts";
+import { formatSuccessfulRun, isLocalStaleIssue } from "./drain.ts";
 
 describe("runWithConcurrency", () => {
   it("processes all items with concurrency=1 (sequential)", async () => {
@@ -125,5 +126,39 @@ describe("runWithConcurrency", () => {
     });
 
     assert.equal(results.length, 0);
+  });
+});
+
+describe("drain route reporting", () => {
+  it("reports cloud delegation without claiming a PR was created", () => {
+    assert.equal(
+      formatSuccessfulRun({
+        issueId: "JOS-1",
+        success: true,
+        executionRoute: "cloud",
+        durationMs: 1,
+        attempts: 0,
+      }),
+      "Cloud delegation complete"
+    );
+  });
+
+  it("reports the PR for successful local work", () => {
+    assert.equal(
+      formatSuccessfulRun({
+        issueId: "JOS-1",
+        success: true,
+        executionRoute: "local",
+        prUrl: "https://github.com/joshgarza/task-runner/pull/45",
+        durationMs: 1,
+        attempts: 1,
+      }),
+      "Pipeline complete: PR https://github.com/joshgarza/task-runner/pull/45"
+    );
+  });
+
+  it("excludes delegated cloud work from local stale warnings", () => {
+    assert.equal(isLocalStaleIssue({ labels: ["agent-ready", "execution:cloud"] }), false);
+    assert.equal(isLocalStaleIssue({ labels: ["agent-ready", "execution:local"] }), true);
   });
 });
