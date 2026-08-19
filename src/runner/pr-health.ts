@@ -24,6 +24,12 @@ export interface PrHealthResult {
   reason: string;
 }
 
+export interface PrSnapshot {
+  url: string;
+  state: string;
+  createdAt: string;
+}
+
 const PR_URL_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 
 /**
@@ -45,10 +51,10 @@ export function extractPrUrls(
 }
 
 /**
- * Check PR state via gh CLI. Returns "MERGED", "CLOSED", or "OPEN".
+ * Check PR state and creation time via gh CLI.
  */
-function getPrState(prUrl: string): string | null {
-  const result = spawnSync("gh", ["pr", "view", prUrl, "--json", "state"], {
+function getPrSnapshot(prUrl: string): PrSnapshot | null {
+  const result = spawnSync("gh", ["pr", "view", prUrl, "--json", "state,createdAt"], {
     timeout: 15_000,
     encoding: "utf-8",
   });
@@ -61,11 +67,22 @@ function getPrState(prUrl: string): string | null {
 
   try {
     const parsed = JSON.parse(result.stdout.trim());
-    return parsed.state ?? null;
+    if (!parsed.state || !parsed.createdAt) {
+      log("WARN", "pr-health", `Missing PR state or creation time for ${prUrl}`);
+      return null;
+    }
+    return { url: prUrl, state: parsed.state, createdAt: parsed.createdAt };
   } catch {
-    log("WARN", "pr-health", `Failed to parse PR state JSON for ${prUrl}`);
+    log("WARN", "pr-health", `Failed to parse PR metadata JSON for ${prUrl}`);
     return null;
   }
+}
+
+export function selectNewestPr(snapshots: PrSnapshot[]): PrSnapshot | null {
+  if (snapshots.length === 0) return null;
+  return snapshots.reduce((newest, candidate) =>
+    Date.parse(candidate.createdAt) > Date.parse(newest.createdAt) ? candidate : newest
+  );
 }
 
 /**
@@ -147,14 +164,25 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
       continue;
     }
 
-    // Use the last PR URL (most recent)
-    const prUrl = prUrls[prUrls.length - 1];
-    const prState = getPrState(prUrl);
+    const snapshots: PrSnapshot[] = [];
+    let metadataComplete = true;
+    for (const prUrl of new Set(prUrls)) {
+      const snapshot = getPrSnapshot(prUrl);
+      if (!snapshot) {
+        metadataComplete = false;
+        log("WARN", issue.identifier, `${prefix}Could not determine PR metadata for ${prUrl}`);
+        break;
+      }
+      snapshots.push(snapshot);
+    }
 
-    if (!prState) {
-      log("WARN", issue.identifier, `${prefix}Could not determine PR state for ${prUrl}`);
+    if (!metadataComplete) {
       continue;
     }
+
+    const newestPr = selectNewestPr(snapshots);
+    if (!newestPr) continue;
+    const { url: prUrl, state: prState } = newestPr;
 
     if (prState === "OPEN") {
       log("INFO", issue.identifier, `${prefix}PR is still open: ${prUrl}`);
