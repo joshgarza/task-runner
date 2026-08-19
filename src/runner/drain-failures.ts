@@ -5,6 +5,8 @@ import * as comments from "../linear/comments.ts";
 import type { LinearIssue, TaskRunnerConfig } from "../types.ts";
 
 export const AGENT_FAILURE_PATTERN = /^🤖 Agent failed/;
+export const LEGACY_AGENT_FAILURE_PATTERN = /^## Agent Failed, Rolled Back to Todo/;
+const LEGACY_CLOUD_DELEGATION_FAILURE_PATTERN = /Failed to delegate cloud work:/;
 
 export interface DrainFailurePolicy {
   agentLabel: string;
@@ -45,7 +47,11 @@ export function getDrainFailurePolicy(config: TaskRunnerConfig): DrainFailurePol
 }
 
 export function countAgentFailures(issueComments: string[]): number {
-  return issueComments.filter((body) => AGENT_FAILURE_PATTERN.test(body)).length;
+  return issueComments.filter((body) =>
+    AGENT_FAILURE_PATTERN.test(body) ||
+    (LEGACY_AGENT_FAILURE_PATTERN.test(body) &&
+      !LEGACY_CLOUD_DELEGATION_FAILURE_PATTERN.test(body))
+  ).length;
 }
 
 export function countAcknowledgedAgentFailures(issueComments: string[]): number {

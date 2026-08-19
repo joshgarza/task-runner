@@ -415,7 +415,8 @@ async function delegateCloudIssue(
       config,
       issue.identifier,
       `Failed to delegate cloud work: ${err.message}`,
-      0
+      0,
+      false
     );
     return failure(
       issue.identifier,
@@ -441,14 +442,19 @@ async function rollbackInProgress(
   config: any,
   identifier: string,
   error: string,
-  attempts: number
+  attempts: number,
+  countAsAgentFailure: boolean = true
 ): Promise<void> {
   if (!transitioned || !issue) return;
   try {
     // Record the countable failure before making the issue drain-eligible
     // again. If the comment cannot be written, leave the issue In Progress so
     // a later drain cannot retry it without a recorded failure.
-    await addComment(issue.id, comments.rollback({ error, attempts }));
+    await addComment(issue.id, comments.rollback({
+      error,
+      attempts,
+      countAsAgentFailure,
+    }));
     await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
     log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
   } catch (err: any) {

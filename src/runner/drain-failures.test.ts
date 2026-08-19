@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   AGENT_FAILURE_PATTERN,
+  LEGACY_AGENT_FAILURE_PATTERN,
   countAgentFailures,
   getDrainFailureStatus,
   quarantineDrainFailure,
@@ -16,16 +17,22 @@ const policy = {
 };
 
 describe("drain failure detection", () => {
-  it("counts only comments beginning with the stable failure sentinel", () => {
+  it("counts current and legacy local failure sentinels", () => {
     const issueComments = [
       "🤖 Agent failed, rolled back to Todo\n\nFirst",
       "## Agent Failed\n\nValidation details",
       "Prefix 🤖 Agent failed later in the comment",
       "🤖 Agent failed after another run",
+      "## Agent Failed, Rolled Back to Todo\n\n### Error\n\n```\nlocal failure\n```",
+      "## Agent Failed, Rolled Back to Todo\n\n### Error\n\n```\nFailed to delegate cloud work: unavailable\n```",
     ];
 
-    assert.equal(countAgentFailures(issueComments), 2);
+    assert.equal(countAgentFailures(issueComments), 3);
     assert.equal(AGENT_FAILURE_PATTERN.source, "^🤖 Agent failed");
+    assert.equal(
+      LEGACY_AGENT_FAILURE_PATTERN.source,
+      "^## Agent Failed, Rolled Back to Todo"
+    );
   });
 
   it("quarantines only local agent-ready work at the configured threshold", () => {
@@ -266,6 +273,14 @@ describe("drain failure comments and query", () => {
     assert.match(comments.rollback({ error: "failed", attempts: 2 }), AGENT_FAILURE_PATTERN);
     assert.doesNotMatch(
       comments.agentFailed({ attempts: 2, maxAttempts: 2, errors: "failed" }),
+      AGENT_FAILURE_PATTERN
+    );
+    assert.doesNotMatch(
+      comments.rollback({
+        error: "Failed to delegate cloud work: unavailable",
+        attempts: 0,
+        countAsAgentFailure: false,
+      }),
       AGENT_FAILURE_PATTERN
     );
   });

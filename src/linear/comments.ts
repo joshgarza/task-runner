@@ -109,9 +109,12 @@ export function nativeReviewRequested(opts: {
 export function rollback(opts: {
   error: string;
   attempts: number;
+  countAsAgentFailure?: boolean;
 }): string {
   return [
-    `🤖 Agent failed, rolled back to Todo`,
+    opts.countAsAgentFailure === false
+      ? `## Cloud Delegation Failed, Rolled Back to Todo`
+      : `🤖 Agent failed, rolled back to Todo`,
     ``,
     `### Error`,
     ``,
