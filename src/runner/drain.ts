@@ -68,13 +68,23 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
         continue;
       }
 
+      let quarantinedIssues: LinearIssue[] = [];
       try {
-        const quarantinedIssues = await fetchAgentReadyIssues(
+        quarantinedIssues = await fetchAgentReadyIssues(
           config.linear.agentFailedLabel,
           fetchStates,
           projectName
         );
-        for (const issue of quarantinedIssues) {
+      } catch (err: any) {
+        log(
+          "WARN",
+          null,
+          `Failed to fetch quarantined issues for "${projectName}": ${err.message}`
+        );
+      }
+
+      for (const issue of quarantinedIssues) {
+        try {
           const reconciled = await reconcileDrainFailureMarker(
             issue,
             drainFailurePolicy,
@@ -88,13 +98,13 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
               `${prefix} missing quarantine marker after ${reconciled.failureCount} failed run(s)`
             );
           }
+        } catch (err: any) {
+          log(
+            "WARN",
+            issue.identifier,
+            `Failed to reconcile quarantine marker: ${err.message}`
+          );
         }
-      } catch (err: any) {
-        log(
-          "WARN",
-          null,
-          `Failed to reconcile quarantined issues for "${projectName}": ${err.message}`
-        );
       }
 
       if (issues.length === 0) {

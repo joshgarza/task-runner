@@ -62,7 +62,10 @@ export interface LinearIssue {
   projectName: string | null;
   projectId: string | null;
   labels: string[];
+  /** TaskRunner-authored comments trusted for automation state. */
   comments: string[];
+  /** All comment bodies, including human context for prompts and display. */
+  allComments?: string[];
   url: string;
   branchName: string;
 }

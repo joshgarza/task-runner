@@ -127,6 +127,23 @@ describe("drain failure detection", () => {
     assert.equal(failedAgain.shouldQuarantine, false);
   });
 
+  it("bounds acknowledgement markers to the trusted failure count", () => {
+    const status = getDrainFailureStatus(
+      {
+        labels: ["agent-ready", "execution:local"],
+        comments: [
+          "🤖 Agent failed, rolled back to Todo",
+          "<!-- agent-failures-quarantined:999999 -->",
+        ],
+      },
+      policy
+    );
+
+    assert.equal(status.totalFailureCount, 1);
+    assert.equal(status.acknowledgedFailureCount, 1);
+    assert.equal(status.failureCount, 0);
+  });
+
   it("adds the quarantine label, removes agent-ready, and posts instructions", async () => {
     const labelCalls: any[] = [];
     const commentCalls: any[] = [];
@@ -153,7 +170,7 @@ describe("drain failure detection", () => {
         commentCalls.push(args);
       },
       createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
-      fetchIssueCommentBodies: async () => [],
+      fetchTaskRunnerCommentBodies: async () => [],
     });
 
     assert.equal(labelCalls.length, 1);
@@ -196,7 +213,7 @@ describe("drain failure detection", () => {
         called = true;
         return { name: "agent-failed", id: "failed-id" };
       },
-      fetchIssueCommentBodies: async () => {
+      fetchTaskRunnerCommentBodies: async () => {
         called = true;
         return [];
       },
@@ -240,7 +257,7 @@ describe("drain failure detection", () => {
         created.push(opts);
         return { name: opts.name, id: "failed-id" };
       },
-      fetchIssueCommentBodies: async () => [],
+      fetchTaskRunnerCommentBodies: async () => [],
     });
 
     assert.deepEqual(created, [{
@@ -278,7 +295,7 @@ describe("drain failure detection", () => {
           throw new Error("comment unavailable");
         },
         createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
-        fetchIssueCommentBodies: async () => [],
+        fetchTaskRunnerCommentBodies: async () => [],
       }),
       /comment unavailable/
     );
@@ -322,7 +339,7 @@ describe("drain failure detection", () => {
         throw new Error("response lost");
       },
       createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
-      fetchIssueCommentBodies: async () => [persistedComment],
+      fetchTaskRunnerCommentBodies: async () => [persistedComment],
     });
 
     assert.equal(labelCalls.length, 1);

@@ -4,6 +4,37 @@ import { getLinearClient } from "./client.ts";
 import { collectAllNodes } from "./labels.ts";
 import type { LinearIssue } from "../types.ts";
 
+let taskRunnerCommentAuthorId: Promise<string> | undefined;
+
+function getTaskRunnerCommentAuthorId(): Promise<string> {
+  if (!taskRunnerCommentAuthorId) {
+    taskRunnerCommentAuthorId = Promise.resolve(getLinearClient().viewer).then(
+      (viewer) => viewer.id
+    );
+  }
+  return taskRunnerCommentAuthorId;
+}
+
+export async function selectCommentBodiesByAuthor(
+  allComments: any[],
+  authorId: string
+): Promise<string[]> {
+  const trustedBodies = await Promise.all(
+    allComments.map(async (comment: any) => {
+      const author = await comment.user;
+      return author?.id === authorId ? comment.body : null;
+    })
+  );
+  return trustedBodies.filter((body): body is string => body !== null);
+}
+
+async function getTaskRunnerCommentBodies(allComments: any[]): Promise<string[]> {
+  return selectCommentBodiesByAuthor(
+    allComments,
+    await getTaskRunnerCommentAuthorId()
+  );
+}
+
 /**
  * Build a LinearIssue from a raw Linear SDK issue object
  */
@@ -15,6 +46,8 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const allLabels = await collectAllNodes(labelsConn);
   const commentsConn = await issue.comments({ first: 250 });
   const allComments = await collectAllNodes(commentsConn);
+  const allCommentBodies = allComments.map((comment: any) => comment.body);
+  const trustedCommentBodies = await getTaskRunnerCommentBodies(allComments);
 
   if (!team) {
     throw new Error(`Issue ${issue.identifier} has no team`);
@@ -32,7 +65,8 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
     projectName: project?.name ?? null,
     projectId: project?.id ?? null,
     labels: allLabels.map((l: any) => l.name),
-    comments: allComments.map((c: any) => c.body),
+    comments: trustedCommentBodies,
+    allComments: allCommentBodies,
     url: issue.url,
     branchName: issue.branchName,
   };
@@ -67,12 +101,12 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
   return toLinearIssue(issue);
 }
 
-export async function fetchIssueCommentBodies(issueId: string): Promise<string[]> {
+export async function fetchTaskRunnerCommentBodies(issueId: string): Promise<string[]> {
   const client = getLinearClient();
   const issue = await client.issue(issueId);
   const commentsConn = await issue.comments({ first: 250 });
   const allComments = await collectAllNodes(commentsConn);
-  return allComments.map((comment: any) => comment.body);
+  return getTaskRunnerCommentBodies(allComments);
 }
 
 /**

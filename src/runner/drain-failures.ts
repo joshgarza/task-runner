@@ -1,7 +1,7 @@
 import { resolveExecutionRoute } from "../execution-route.ts";
 import { applyLabelChanges, resolveTeamLabels } from "../linear/labels.ts";
 import { addComment, createLabel } from "../linear/mutations.ts";
-import { fetchIssueCommentBodies } from "../linear/queries.ts";
+import { fetchTaskRunnerCommentBodies } from "../linear/queries.ts";
 import * as comments from "../linear/comments.ts";
 import type { LinearIssue, TaskRunnerConfig } from "../types.ts";
 
@@ -30,7 +30,7 @@ export interface DrainFailureDependencies {
   applyLabelChanges: typeof applyLabelChanges;
   addComment: typeof addComment;
   createLabel: typeof createLabel;
-  fetchIssueCommentBodies: typeof fetchIssueCommentBodies;
+  fetchTaskRunnerCommentBodies: typeof fetchTaskRunnerCommentBodies;
 }
 
 const defaultDependencies: DrainFailureDependencies = {
@@ -38,7 +38,7 @@ const defaultDependencies: DrainFailureDependencies = {
   applyLabelChanges,
   addComment,
   createLabel,
-  fetchIssueCommentBodies,
+  fetchTaskRunnerCommentBodies,
 };
 
 export function getDrainFailurePolicy(
@@ -79,7 +79,10 @@ export function getDrainFailureStatus(
   policy: DrainFailurePolicy
 ): DrainFailureStatus {
   const totalFailureCount = countAgentFailures(issue.comments);
-  const acknowledgedFailureCount = countAcknowledgedAgentFailures(issue.comments);
+  const acknowledgedFailureCount = Math.min(
+    totalFailureCount,
+    countAcknowledgedAgentFailures(issue.comments)
+  );
   const failureCount = Math.max(0, totalFailureCount - acknowledgedFailureCount);
   const hasAgentFailedLabel = issue.labels.includes(policy.agentFailedLabel);
 
@@ -149,7 +152,7 @@ export async function quarantineDrainFailure(
     } catch (secondError) {
       let persistedComments: string[];
       try {
-        persistedComments = await deps.fetchIssueCommentBodies(issue.id);
+        persistedComments = await deps.fetchTaskRunnerCommentBodies(issue.id);
       } catch (verificationError) {
         throw new Error(
           `Failed to post or verify the quarantine marker; queue labels remain quarantined: ${String(secondError)}; verification failed: ${String(verificationError)}`
