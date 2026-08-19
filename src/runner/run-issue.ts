@@ -112,8 +112,12 @@ export async function runIssue(
       );
     }
   } catch (err: any) {
-    log("WARN", identifier, `Failed to check blocking relations: ${err.message}`);
-    // Non-fatal — proceed if the check fails (e.g. API error)
+    return failure(
+      identifier,
+      `Failed to verify blocking relations: ${err.message}`,
+      startTime,
+      0
+    );
   }
 
   // 3. Resolve project config (issue must belong to a configured project)
