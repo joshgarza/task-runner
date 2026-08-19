@@ -446,6 +446,17 @@ async function rollbackInProgress(
   countAsAgentFailure: boolean = true
 ): Promise<void> {
   if (!transitioned || !issue) return;
+
+  if (!countAsAgentFailure) {
+    try {
+      await transitionIssue(issue.id, issue.teamKey, config.linear.todoState);
+      log("INFO", identifier, `Rolled back to "${config.linear.todoState}"`);
+    } catch (err: any) {
+      log("WARN", identifier, `Failed to roll back issue state: ${err.message}`);
+    }
+    return;
+  }
+
   try {
     // Record the countable failure before making the issue drain-eligible
     // again. If the comment cannot be written, leave the issue In Progress so

@@ -67,6 +67,14 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
   return toLinearIssue(issue);
 }
 
+export async function fetchIssueCommentBodies(issueId: string): Promise<string[]> {
+  const client = getLinearClient();
+  const issue = await client.issue(issueId);
+  const commentsConn = await issue.comments({ first: 250 });
+  const allComments = await collectAllNodes(commentsConn);
+  return allComments.map((comment: any) => comment.body);
+}
+
 /**
  * Fetch all issues with a given label, filtered by state and optionally by project name
  */

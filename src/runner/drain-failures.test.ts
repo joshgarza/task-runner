@@ -136,6 +136,7 @@ describe("drain failure detection", () => {
         commentCalls.push(args);
       },
       createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
+      fetchIssueCommentBodies: async () => [],
     });
 
     assert.equal(labelCalls.length, 1);
@@ -178,6 +179,10 @@ describe("drain failure detection", () => {
         called = true;
         return { name: "agent-failed", id: "failed-id" };
       },
+      fetchIssueCommentBodies: async () => {
+        called = true;
+        return [];
+      },
     });
 
     assert.equal(status.shouldQuarantine, true);
@@ -218,6 +223,7 @@ describe("drain failure detection", () => {
         created.push(opts);
         return { name: opts.name, id: "failed-id" };
       },
+      fetchIssueCommentBodies: async () => [],
     });
 
     assert.deepEqual(created, [{
@@ -255,6 +261,7 @@ describe("drain failure detection", () => {
           throw new Error("comment unavailable");
         },
         createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
+        fetchIssueCommentBodies: async () => [],
       }),
       /comment unavailable/
     );
@@ -265,6 +272,43 @@ describe("drain failure detection", () => {
       ["agent-failed"],
       false,
     ]);
+  });
+
+  it("keeps quarantine labels when a failed comment response actually persisted", async () => {
+    const labelCalls: any[] = [];
+    const issue = {
+      id: "issue-1",
+      teamKey: "JOS",
+      labels: ["agent-ready", "execution:local"],
+      comments: [
+        "🤖 Agent failed, rolled back to Todo",
+        "🤖 Agent failed, rolled back to Todo",
+      ],
+    };
+    const persistedComment = comments.agentFailureQuarantined({
+      failureCount: 2,
+      totalFailureCount: 2,
+      agentLabel: policy.agentLabel,
+      agentFailedLabel: policy.agentFailedLabel,
+    });
+
+    await quarantineDrainFailure(issue, policy, false, {
+      resolveTeamLabels: async () => new Map([
+        ["agent-ready", "ready-id"],
+        ["agent-failed", "failed-id"],
+      ]),
+      applyLabelChanges: async (...args: any[]) => {
+        labelCalls.push(args);
+        return { labelsAdded: [], labelsRemoved: [] };
+      },
+      addComment: async () => {
+        throw new Error("response lost");
+      },
+      createLabel: async () => ({ name: "agent-failed", id: "failed-id" }),
+      fetchIssueCommentBodies: async () => [persistedComment],
+    });
+
+    assert.equal(labelCalls.length, 1);
   });
 });
 

@@ -1,6 +1,7 @@
 import { resolveExecutionRoute } from "../execution-route.ts";
 import { applyLabelChanges, resolveTeamLabels } from "../linear/labels.ts";
 import { addComment, createLabel } from "../linear/mutations.ts";
+import { fetchIssueCommentBodies } from "../linear/queries.ts";
 import * as comments from "../linear/comments.ts";
 import type { LinearIssue, TaskRunnerConfig } from "../types.ts";
 
@@ -29,6 +30,7 @@ export interface DrainFailureDependencies {
   applyLabelChanges: typeof applyLabelChanges;
   addComment: typeof addComment;
   createLabel: typeof createLabel;
+  fetchIssueCommentBodies: typeof fetchIssueCommentBodies;
 }
 
 const defaultDependencies: DrainFailureDependencies = {
@@ -36,6 +38,7 @@ const defaultDependencies: DrainFailureDependencies = {
   applyLabelChanges,
   addComment,
   createLabel,
+  fetchIssueCommentBodies,
 };
 
 export function getDrainFailurePolicy(config: TaskRunnerConfig): DrainFailurePolicy {
@@ -141,6 +144,17 @@ export async function quarantineDrainFailure(
     try {
       await deps.addComment(issue.id, quarantineComment);
     } catch (secondError) {
+      let persistedComments: string[];
+      try {
+        persistedComments = await deps.fetchIssueCommentBodies(issue.id);
+      } catch (verificationError) {
+        throw new Error(
+          `Failed to post or verify the quarantine marker; queue labels remain quarantined: ${String(secondError)}; verification failed: ${String(verificationError)}`
+        );
+      }
+
+      if (persistedComments.includes(quarantineComment)) return status;
+
       try {
         await deps.applyLabelChanges(
           issue.id,
