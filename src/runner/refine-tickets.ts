@@ -24,6 +24,24 @@ function isAlreadyRefined(description: string | null): boolean {
   return !!description && description.includes(REFINED_MARKER);
 }
 
+export function getRetainedLabelIds(
+  labels: { id: string; name: string }[],
+  executionRoute: string,
+  agentLabel: string
+): string[] {
+  return labels
+    .filter((label) => {
+      if (label.name.startsWith("agent:") || label.name.startsWith("execution:")) {
+        return false;
+      }
+      if (executionRoute === "ops" && label.name === agentLabel) {
+        return false;
+      }
+      return true;
+    })
+    .map((label) => label.id);
+}
+
 /**
  * Parse the exploration agent's JSON output into a structured result.
  */
@@ -251,11 +269,11 @@ export async function refineTickets(
       const fullIssue = await client.issue(issue.id);
       const labelsConn = await fullIssue.labels({ first: 250 });
       const allLabels = await collectAllNodes(labelsConn);
-      const retainedLabelIds = allLabels
-        .filter((label: any) =>
-          !label.name.startsWith("agent:") && !label.name.startsWith("execution:")
-        )
-        .map((label: any) => label.id);
+      const retainedLabelIds = getRetainedLabelIds(
+        allLabels as { id: string; name: string }[],
+        output.executionRoute,
+        config.linear.agentLabel
+      );
 
       const teamLabels = await resolveTeamLabels(opts.team);
       const executionLabelId = teamLabels.get(executionLabel);
