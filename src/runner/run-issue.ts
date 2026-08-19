@@ -265,12 +265,14 @@ export async function runIssue(
     // 12. Request native GitHub Codex review. GitHub owns review feedback;
     // TaskRunner only records the request and reconciles final PR state.
     const reviewRequest = await requestCodexReview(prUrl, identifier);
-    const inReviewTransition = await transitionToInReview(
-      issue.id,
-      issue.teamKey,
-      config.linear.inReviewState,
-      identifier
-    );
+    const inReviewTransition = reviewRequest.requested
+      ? await transitionToInReview(
+          issue.id,
+          issue.teamKey,
+          config.linear.inReviewState,
+          identifier
+        )
+      : null;
     try {
       await addComment(issue.id, comments.nativeReviewRequested({
         prUrl,
@@ -284,6 +286,21 @@ export async function runIssue(
     // The implementation and remote PR succeeded, so preserve the branch even
     // if Linear state reconciliation exhausted its retries.
     pipelineSucceeded = true;
+
+    if (!reviewRequest.requested) {
+      const error = `PR created, but failed to request native Codex review after ${reviewRequest.attempts} attempts: ${reviewRequest.error}`;
+      log("ERROR", identifier, error);
+      return {
+        issueId: identifier,
+        success: false,
+        executionRoute,
+        prUrl,
+        reviewRequested: false,
+        error,
+        durationMs: Date.now() - startTime,
+        attempts,
+      };
+    }
 
     if (!inReviewTransition.transitioned) {
       const error = `PR created, but failed to transition issue to ${config.linear.inReviewState} after ${inReviewTransition.attempts} attempts: ${inReviewTransition.error}`;
