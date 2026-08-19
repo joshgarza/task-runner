@@ -6,9 +6,10 @@ export function buildWorkerPrompt(
   issue: LinearIssue,
   teamConfig: ProjectConfig
 ): string {
+  const issueComments = issue.allComments ?? issue.comments;
   const comments =
-    issue.comments.length > 0
-      ? issue.comments.map((c, i) => `Comment ${i + 1}:\n${c}`).join("\n\n")
+    issueComments.length > 0
+      ? issueComments.map((c, i) => `Comment ${i + 1}:\n${c}`).join("\n\n")
       : "No comments.";
 
   return `You are implementing a Linear ticket. Follow the instructions precisely.

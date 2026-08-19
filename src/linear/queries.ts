@@ -2,7 +2,101 @@
 
 import { getLinearClient } from "./client.ts";
 import { collectAllNodes } from "./labels.ts";
+import { loadConfig } from "../config.ts";
 import type { LinearIssue } from "../types.ts";
+
+let taskRunnerCommentAuthorId: Promise<string> | undefined;
+
+type CommentRecord = {
+  body: string;
+  authorId?: string;
+};
+
+type CommentPage = {
+  issue: {
+    comments: {
+      nodes: Array<{ body: string; user?: { id: string } | null }>;
+      pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+    };
+  };
+};
+
+const ISSUE_COMMENTS_QUERY = `
+  query TaskRunnerIssueComments($id: String!, $after: String) {
+    issue(id: $id) {
+      comments(first: 250, after: $after) {
+        nodes {
+          body
+          user { id }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
+function getTaskRunnerCommentAuthorId(): Promise<string> {
+  if (!taskRunnerCommentAuthorId) {
+    const lookup = Promise.resolve(getLinearClient().viewer).then(
+      (viewer) => viewer.id
+    );
+    taskRunnerCommentAuthorId = lookup.catch((error) => {
+      taskRunnerCommentAuthorId = undefined;
+      throw error;
+    });
+  }
+  return taskRunnerCommentAuthorId;
+}
+
+export async function selectCommentBodiesByAuthor(
+  allComments: CommentRecord[],
+  authorIds: ReadonlySet<string>
+): Promise<string[]> {
+  return allComments
+    .filter((comment) => comment.authorId !== undefined && authorIds.has(comment.authorId))
+    .map((comment) => comment.body);
+}
+
+async function getTaskRunnerCommentBodies(allComments: CommentRecord[]): Promise<string[]> {
+  const currentAuthorId = await getTaskRunnerCommentAuthorId();
+  const authorIds = new Set([
+    currentAuthorId,
+    ...loadConfig().linear.trustedCommentAuthorIds,
+  ]);
+  return selectCommentBodiesByAuthor(
+    allComments,
+    authorIds
+  );
+}
+
+async function fetchIssueCommentRecords(issueId: string): Promise<CommentRecord[]> {
+  const client = getLinearClient();
+  const comments: CommentRecord[] = [];
+  let after: string | undefined;
+
+  do {
+    const data = await client.client.request<
+      CommentPage,
+      { id: string; after?: string }
+    >(ISSUE_COMMENTS_QUERY, { id: issueId, after });
+    const page = data.issue.comments;
+    comments.push(...page.nodes.map((comment) => ({
+      body: comment.body,
+      authorId: comment.user?.id,
+    })));
+
+    if (!page.pageInfo.hasNextPage) break;
+    if (!page.pageInfo.endCursor) {
+      throw new Error(`Linear comment pagination returned no cursor for ${issueId}`);
+    }
+    after = page.pageInfo.endCursor;
+  } while (true);
+
+  return comments;
+}
 
 /**
  * Build a LinearIssue from a raw Linear SDK issue object
@@ -13,7 +107,9 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
   const project = await issue.project;
   const labelsConn = await issue.labels({ first: 250 });
   const allLabels = await collectAllNodes(labelsConn);
-  const commentsConn = await issue.comments({ first: 250 });
+  const allComments = await fetchIssueCommentRecords(issue.id);
+  const allCommentBodies = allComments.map((comment) => comment.body);
+  const trustedCommentBodies = await getTaskRunnerCommentBodies(allComments);
 
   if (!team) {
     throw new Error(`Issue ${issue.identifier} has no team`);
@@ -31,7 +127,8 @@ async function toLinearIssue(issue: any): Promise<LinearIssue> {
     projectName: project?.name ?? null,
     projectId: project?.id ?? null,
     labels: allLabels.map((l: any) => l.name),
-    comments: commentsConn.nodes.map((c: any) => c.body),
+    comments: trustedCommentBodies,
+    allComments: allCommentBodies,
     url: issue.url,
     branchName: issue.branchName,
   };
@@ -66,41 +163,75 @@ export async function fetchIssue(identifier: string): Promise<LinearIssue> {
   return toLinearIssue(issue);
 }
 
+export async function fetchTaskRunnerCommentBodies(issueId: string): Promise<string[]> {
+  const allComments = await fetchIssueCommentRecords(issueId);
+  return getTaskRunnerCommentBodies(allComments);
+}
+
 /**
  * Fetch all issues with a given label, filtered by state and optionally by project name
  */
 export async function fetchAgentReadyIssues(
   labelName: string,
   stateNames: string | string[],
-  projectName?: string
+  projectName?: string,
+  excludedLabelName?: string,
+  maxResults?: number
 ): Promise<LinearIssue[]> {
+  if (maxResults !== undefined && maxResults <= 0) return [];
+
   const client = getLinearClient();
 
+  const filter = buildAgentReadyIssueFilter(
+    labelName,
+    stateNames,
+    projectName,
+    excludedLabelName
+  );
+
+  const issues = await client.issues({
+    filter,
+    first: Math.min(maxResults ?? 50, 50),
+  });
+  const allIssues = await collectAllNodes(issues, maxResults);
+
+  const results: LinearIssue[] = [];
+  for (const issue of allIssues) {
+    results.push(await toLinearIssue(issue));
+  }
+
+  return results;
+}
+
+export function buildAgentReadyIssueFilter(
+  labelName: string,
+  stateNames: string | string[],
+  projectName?: string,
+  excludedLabelName?: string
+): any {
   // Build filter — support single state or multiple states
   const stateFilter = Array.isArray(stateNames)
     ? { name: { in: stateNames } }
     : { name: { eq: stateNames } };
 
   const filter: any = {
-    labels: { name: { eq: labelName } },
     state: stateFilter,
   };
+
+  if (excludedLabelName) {
+    filter.and = [
+      { labels: { some: { name: { eq: labelName } } } },
+      { labels: { every: { name: { neq: excludedLabelName } } } },
+    ];
+  } else {
+    filter.labels = { name: { eq: labelName } };
+  }
 
   if (projectName) {
     filter.project = { name: { eq: projectName } };
   }
 
-  const issues = await client.issues({
-    filter,
-    first: 50,
-  });
-
-  const results: LinearIssue[] = [];
-  for (const issue of issues.nodes) {
-    results.push(await toLinearIssue(issue));
-  }
-
-  return results;
+  return filter;
 }
 
 /**

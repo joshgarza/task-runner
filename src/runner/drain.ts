@@ -7,6 +7,12 @@ import { fetchAgentReadyIssues, fetchStaleIssues, fetchForwardBlockCount } from 
 import { runIssue } from "./run-issue.ts";
 import { runWithConcurrency } from "../concurrency.ts";
 import { resolveExecutionRoute } from "../execution-route.ts";
+import {
+  getDrainFailurePolicy,
+  getDrainFailureStatus,
+  quarantineDrainFailure,
+  reconcileDrainFailureMarker,
+} from "./drain-failures.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
 export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
@@ -15,6 +21,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
   const label = options.label ?? config.linear.agentLabel;
   const limit = options.limit ?? 50;
   const concurrency = options.concurrency ?? config.defaults.drainConcurrency;
+  const drainFailurePolicy = getDrainFailurePolicy(config, label);
 
   if (!acquireLock()) {
     log("WARN", null, "Lock held by another worker, skipping drain");
@@ -41,16 +48,71 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       }
     }
 
+    // Reconcile every quarantined project independently of the execution
+    // limit, so a full queue in one project cannot starve another project's
+    // missing acknowledgement markers.
+    const fetchStates = [config.linear.todoState, "Backlog"];
+    for (const projectName of projectNames) {
+      let quarantinedIssues: LinearIssue[] = [];
+      try {
+        quarantinedIssues = await fetchAgentReadyIssues(
+          config.linear.agentFailedLabel,
+          fetchStates,
+          projectName
+        );
+      } catch (err: any) {
+        log(
+          "WARN",
+          null,
+          `Failed to fetch quarantined issues for "${projectName}": ${err.message}`
+        );
+      }
+
+      for (const issue of quarantinedIssues) {
+        try {
+          const reconciled = await reconcileDrainFailureMarker(
+            issue,
+            drainFailurePolicy,
+            options.dryRun
+          );
+          if (reconciled) {
+            const prefix = options.dryRun ? "[dry-run] Would reconcile" : "Reconciled";
+            log(
+              "INFO",
+              issue.identifier,
+              `${prefix} missing quarantine marker after ${reconciled.failureCount} failed run(s)`
+            );
+          }
+        } catch (err: any) {
+          log(
+            "WARN",
+            issue.identifier,
+            `Failed to reconcile quarantine marker: ${err.message}`
+          );
+        }
+      }
+    }
+
     // Collect all issues across projects, respecting the limit
     // Query both Todo and Backlog — matches the valid states in run-issue.ts
-    const fetchStates = [config.linear.todoState, "Backlog"];
     const allIssues: LinearIssue[] = [];
     for (const projectName of projectNames) {
+      if (allIssues.length >= limit) {
+        log("INFO", null, `Reached limit (${limit}), stopping fetch`);
+        break;
+      }
+
       log("INFO", null, `Fetching "${label}" issues for project "${projectName}"...`);
 
       let issues;
       try {
-        issues = await fetchAgentReadyIssues(label, fetchStates, projectName);
+        issues = await fetchAgentReadyIssues(
+          label,
+          fetchStates,
+          projectName,
+          config.linear.agentFailedLabel,
+          limit - allIssues.length
+        );
       } catch (err: any) {
         log("ERROR", null, `Failed to fetch issues for "${projectName}": ${err.message}`);
         continue;
@@ -68,27 +130,80 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
         allIssues.push(issue);
       }
 
-      if (allIssues.length >= limit) {
-        log("INFO", null, `Reached limit (${limit}), stopping fetch`);
-        break;
+    }
+
+    // Dry runs report queue removals but never mutate Linear.
+    if (options.dryRun) {
+      const results: RunResult[] = allIssues.map((issue) => {
+        const status = getDrainFailureStatus(issue, drainFailurePolicy);
+        if (status.shouldQuarantine) {
+          log(
+            "INFO",
+            issue.identifier,
+            `[dry-run] Would skip and remove from queue after ${status.failureCount} failed run(s); requires human triage (${issue.url})`
+          );
+        } else {
+          const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
+          log("INFO", issue.identifier, `[dry-run] ${issue.title} | project: ${issue.projectName ?? "none"}${labels} (${issue.url})`);
+        }
+
+        return {
+          issueId: issue.identifier,
+          success: true,
+          durationMs: 0,
+          attempts: 0,
+        };
+      });
+      logSummary(results, true);
+      return results;
+    }
+
+    // Quarantine exhausted local queue items before prioritizing runnable work.
+    const runnableIssues: LinearIssue[] = [];
+    const quarantineResults: RunResult[] = [];
+    for (const issue of allIssues) {
+      const status = getDrainFailureStatus(issue, drainFailurePolicy);
+      if (!status.shouldQuarantine) {
+        runnableIssues.push(issue);
+        continue;
+      }
+
+      try {
+        await quarantineDrainFailure(issue, drainFailurePolicy);
+        log("WARN", issue.identifier, `Removed from agent queue after ${status.failureCount} failed run(s); requires human triage`);
+        quarantineResults.push({
+          issueId: issue.identifier,
+          success: true,
+          durationMs: 0,
+          attempts: 0,
+        });
+      } catch (err: any) {
+        log("ERROR", issue.identifier, `Failed to remove from agent queue: ${err.message}`);
+        quarantineResults.push({
+          issueId: issue.identifier,
+          success: false,
+          error: err.message,
+          durationMs: 0,
+          attempts: 0,
+        });
       }
     }
 
     // Prioritize: sort by forward block count (most-blocking first)
-    if (allIssues.length > 1) {
+    if (runnableIssues.length > 1) {
       try {
         log("INFO", null, "Fetching dependency counts for prioritization...");
         const blockCounts = await Promise.all(
-          allIssues.map((issue) => fetchForwardBlockCount(issue.id))
+          runnableIssues.map((issue) => fetchForwardBlockCount(issue.id))
         );
 
         // Build indexed pairs and stable-sort descending by block count
-        const indexed = allIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
+        const indexed = runnableIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
         indexed.sort((a, b) => b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
 
-        // Replace allIssues in-place with sorted order
+        // Replace runnableIssues in-place with sorted order
         for (let i = 0; i < indexed.length; i++) {
-          allIssues[i] = indexed[i].issue;
+          runnableIssues[i] = indexed[i].issue;
         }
 
         // Log prioritized order
@@ -102,25 +217,10 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       }
     }
 
-    // Handle dry run
-    if (options.dryRun) {
-      const results: RunResult[] = allIssues.map((issue) => {
-        const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
-        log("INFO", issue.identifier, `[dry-run] ${issue.title} | project: ${issue.projectName ?? "none"}${labels} (${issue.url})`);
-        return {
-          issueId: issue.identifier,
-          success: true,
-          durationMs: 0,
-          attempts: 0,
-        };
-      });
-      logSummary(results, true);
-      return results;
-    }
-
     // Process issues with concurrency pool
-    log("INFO", null, `Processing ${allIssues.length} issue(s) with concurrency ${concurrency}`);
-    const results = await runWithConcurrency(allIssues, concurrency, processIssue);
+    log("INFO", null, `Processing ${runnableIssues.length} issue(s) with concurrency ${concurrency}`);
+    const processedResults = await runWithConcurrency(runnableIssues, concurrency, processIssue);
+    const results = [...quarantineResults, ...processedResults];
 
     logSummary(results, false);
     return results;

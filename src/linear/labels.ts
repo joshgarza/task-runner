@@ -7,12 +7,12 @@ import { log } from "../logger.ts";
 /**
  * Collect all nodes from a paginated Linear connection
  */
-export async function collectAllNodes<T>(connection: { nodes: T[]; fetchNext: () => Promise<{ nodes: T[]; fetchNext: () => Promise<any>; pageInfo: { hasNextPage: boolean } }>; pageInfo: { hasNextPage: boolean } }): Promise<T[]> {
-  const all: T[] = [...connection.nodes];
+export async function collectAllNodes<T>(connection: { nodes: T[]; fetchNext: () => Promise<{ nodes: T[]; fetchNext: () => Promise<any>; pageInfo: { hasNextPage: boolean } }>; pageInfo: { hasNextPage: boolean } }, limit: number = Number.POSITIVE_INFINITY): Promise<T[]> {
+  const all: T[] = connection.nodes.slice(0, limit);
   let current = connection;
-  while (current.pageInfo.hasNextPage) {
+  while (all.length < limit && current.pageInfo.hasNextPage) {
     current = await current.fetchNext();
-    all.push(...current.nodes);
+    all.push(...current.nodes.slice(0, limit - all.length));
   }
   return all;
 }

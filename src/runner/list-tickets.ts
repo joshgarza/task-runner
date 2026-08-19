@@ -46,9 +46,10 @@ export async function listTickets(opts: ListTicketsOptions): Promise<void> {
       console.log(`  ${issue.identifier}: ${issue.title}${labels}${project}`);
       console.log(`    ${issue.url}`);
 
-      if (opts.comments && issue.comments.length > 0) {
-        console.log(`    Comments (${issue.comments.length}):`);
-        for (const comment of issue.comments) {
+      const issueComments = issue.allComments ?? issue.comments;
+      if (opts.comments && issueComments.length > 0) {
+        console.log(`    Comments (${issueComments.length}):`);
+        for (const comment of issueComments) {
           const lines = comment.split("\n");
           for (const line of lines) {
             console.log(`      ${line}`);

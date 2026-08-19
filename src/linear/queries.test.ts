@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildRecentActivityFilter } from "./queries.ts";
+import {
+  buildRecentActivityFilter,
+  selectCommentBodiesByAuthor,
+} from "./queries.ts";
 
 describe("buildRecentActivityFilter", () => {
   it("uses an ISO timestamp and preserves the optional project filter", () => {
@@ -10,5 +13,36 @@ describe("buildRecentActivityFilter", () => {
       updatedAt: { gte: "2026-08-17T18:30:00.000Z" },
       project: { name: { eq: "task-runner" } },
     });
+  });
+});
+
+describe("selectCommentBodiesByAuthor", () => {
+  it("keeps only comments authored by the trusted Linear identity", async () => {
+    const comments = [
+      { body: "trusted marker", authorId: "runner-user" },
+      { body: "forged marker", authorId: "other-user" },
+      { body: "external marker", authorId: undefined },
+    ];
+
+    assert.deepEqual(
+      await selectCommentBodiesByAuthor(comments, new Set(["runner-user"])),
+      ["trusted marker"]
+    );
+  });
+
+  it("retains comments from explicitly migrated TaskRunner identities", async () => {
+    const comments = [
+      { body: "current marker", authorId: "current-runner" },
+      { body: "historical marker", authorId: "previous-runner" },
+      { body: "untrusted marker", authorId: "other-user" },
+    ];
+
+    assert.deepEqual(
+      await selectCommentBodiesByAuthor(
+        comments,
+        new Set(["current-runner", "previous-runner"])
+      ),
+      ["current marker", "historical marker"]
+    );
   });
 });

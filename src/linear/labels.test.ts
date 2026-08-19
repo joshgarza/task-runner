@@ -3,7 +3,37 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeLabelDiff } from "./labels.ts";
+import { collectAllNodes, computeLabelDiff } from "./labels.ts";
+
+function paginatedConnection<T>(pages: T[][], index = 0, onFetch = () => {}): any {
+  return {
+    nodes: pages[index],
+    pageInfo: { hasNextPage: index < pages.length - 1 },
+    fetchNext: async () => {
+      onFetch();
+      return paginatedConnection(pages, index + 1, onFetch);
+    },
+  };
+}
+
+describe("collectAllNodes", () => {
+  it("follows every page when no limit is provided", async () => {
+    const connection = paginatedConnection([[1, 2], [3, 4], [5]]);
+    assert.deepEqual(await collectAllNodes(connection), [1, 2, 3, 4, 5]);
+  });
+
+  it("stops fetching once the requested result limit is reached", async () => {
+    let fetches = 0;
+    const connection = paginatedConnection(
+      [[1, 2], [3, 4], [5]],
+      0,
+      () => { fetches++; }
+    );
+
+    assert.deepEqual(await collectAllNodes(connection, 3), [1, 2, 3]);
+    assert.equal(fetches, 1);
+  });
+});
 
 describe("computeLabelDiff", () => {
   const teamLabels = new Map([

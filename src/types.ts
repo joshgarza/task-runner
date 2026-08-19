@@ -18,6 +18,8 @@ export interface ProjectConfig {
 
 export interface LinearConfig {
   agentLabel: string;
+  agentFailedLabel: string;
+  trustedCommentAuthorIds: string[];
   needsApprovalLabel: string;
   inProgressState: string;
   inReviewState: string;
@@ -31,6 +33,7 @@ export interface DefaultsConfig {
   contextModel: string;
   contextReasoningEffort: ModelReasoningEffort;
   maxAttempts: number;
+  maxDrainFailures: number;
   agentTimeoutMs: number;
   drainConcurrency: number;
 }
@@ -60,7 +63,10 @@ export interface LinearIssue {
   projectName: string | null;
   projectId: string | null;
   labels: string[];
+  /** TaskRunner-authored comments trusted for automation state. */
   comments: string[];
+  /** All comment bodies, including human context for prompts and display. */
+  allComments?: string[];
   url: string;
   branchName: string;
 }
