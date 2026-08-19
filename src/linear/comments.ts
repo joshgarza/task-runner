@@ -3,7 +3,7 @@
 // Each function takes typed parameters and returns a markdown string.
 // The addComment function in mutations.ts stays unchanged as the transport layer.
 
-import type { ReviewVerdict, ContextResult } from "../types.ts";
+import type { ContextResult } from "../types.ts";
 
 function timestamp(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
@@ -83,22 +83,24 @@ export function agentFailed(opts: {
   ].join("\n");
 }
 
-export function reviewPassed(opts: {
-  verdict: ReviewVerdict;
+export function nativeReviewRequested(opts: {
   prUrl: string;
+  requested: boolean;
+  error?: string;
 }): string {
-  const check = (pass: boolean) => pass ? "pass" : "fail";
+  if (opts.requested) {
+    return [
+      "## Native Codex Review Requested",
+      "",
+      `Codex was asked to review [the pull request](${opts.prUrl}) on GitHub. Review feedback and discussion stay on the PR.`,
+    ].join("\n");
+  }
+
   return [
-    `## Review Passed`,
-    ``,
-    opts.verdict.summary,
-    ``,
-    `| Check | Status |`,
-    `|-------|--------|`,
-    `| Tests | ${check(opts.verdict.testsPass)} |`,
-    `| Lint | ${check(opts.verdict.lintPass)} |`,
-    `| TypeScript | ${check(opts.verdict.tscPass)} |`,
-    ``,
+    "## Native Codex Review Request Failed",
+    "",
+    `The pull request is ready for review, but TaskRunner could not post the Codex review request: ${opts.error ?? "unknown error"}`,
+    "",
     `**PR:** [${opts.prUrl}](${opts.prUrl})`,
   ].join("\n");
 }

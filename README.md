@@ -6,18 +6,12 @@ Linear-powered Codex routing. Drop tickets into Linear, and task-runner sends no
 
 ```
 Linear ticket (agent-ready label, Todo state)
-         │
-         ▼
-   ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-   │  task-runner │────▶│ Worker Agent  │────▶│ Review Agent  │
-   │  drain/run   │     │ (worktree)   │     │ (read-only)  │
-   └──────┬──────┘     └──────────────┘     └──────┬───────┘
-          │                                         │
-          │  runner pushes branch,          approved → label PR
-          │  creates PR via gh              needs fix → new Linear ticket
-          │                                         │
-          ▼                                         ▼
-   You review & merge                    Next drain picks up fix ticket
+         |
+         +-- local --> worktree --> validate/retry --> PR --> @codex review
+         |
+         +-- cloud --> @Codex in Linear --> Codex cloud chat
+         |
+         +-- ops ----> stop for human approval
 ```
 
 The runner handles local git operations, validation, retries, PR creation, and Linear reconciliation. Local implementation runs use a Codex `workspace-write` sandbox. Context runs use a read-only sandbox.
@@ -75,21 +69,18 @@ Edit `task-runner.config.json` to map Linear projects to repos:
   "defaults": {
     "model": "gpt-5.4",
     "reasoningEffort": "high",
-    "reviewModel": "gpt-5.4",
-    "reviewReasoningEffort": "high",
     "contextModel": "gpt-5.4",
     "contextReasoningEffort": "medium",
     "maxAttempts": 2,
     "agentTimeoutMs": 900000
   },
   "github": {
-    "prLabels": [],
-    "reviewApprovedLabel": "ready-for-human-review"
+    "prLabels": []
   }
 }
 ```
 
-Project names must match Linear project names exactly. `prLabels` defaults to empty (no auto-labels). `reviewApprovedLabel` is optional.
+Project names must match Linear project names exactly. `prLabels` defaults to empty, with no automatic labels.
 
 ## Usage
 
@@ -98,14 +89,14 @@ Project names must match Linear project names exactly. `prLabels` defaults to em
 task-runner run JOS-47
 task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
 
-# Dry run — fetch and validate without spawning agents
+# Dry run, fetch and resolve routing without executing work
 task-runner run JOS-47 --dry-run
 
 # Drain all agent-ready issues sequentially
 task-runner drain
 task-runner drain --project my-project --limit 5
 
-# Review an existing PR standalone
+# Request a native Codex review on an existing PR
 task-runner review https://github.com/user/repo/pull/42
 
 # Create a new Linear issue
@@ -145,27 +136,28 @@ Direct commits to `main` are blocked by git hooks. Work on feature worktrees, th
 
 ## Pipeline steps
 
-1. **Fetch** issue from Linear (title, description, comments, project)
-2. **Validate** issue is in Todo or Backlog state
-3. **Transition** Linear → In Progress, add comment
-4. **Create worktree** at `<repo>/.task-runner-worktrees/<issue-id>/`
-5. **Spawn worker agent** in a Codex `workspace-write` sandbox
-6. **Validate output** — commits exist, tests pass, lint clean
-7. **Retry** if validation fails (up to `maxAttempts`)
-8. **Push branch** and **create PR** (runner does this, not the agent)
-9. **Spawn review agent** in a read-only sandbox to evaluate the PR
-10. **Act on verdict** — label PR if approved, create fix ticket if not
-11. **Clean up** worktree
+1. **Fetch** the Linear issue and resolve its execution route.
+2. **Validate** state, approval requirements, project configuration, and blockers.
+3. **Delegate cloud**, reject ops, or continue with local execution.
+4. **Create a worktree** and run local Codex with workspace-write access.
+5. **Validate and retry** until checks pass or `maxAttempts` is exhausted.
+6. **Push the branch** and create a GitHub pull request.
+7. **Request native review** by commenting `@codex review` on the PR.
+8. **Transition to In Review** and let `pr-health` reconcile merge or close state back to Linear.
+9. **Clean up** the local worktree.
 
-## Agent permissions
+## Execution permissions
 
-**Worker** (implements code): Codex `workspace-write` sandbox. Prompted to keep changes focused, commit locally, avoid network access, and leave push/PR creation to the runner.
+**Local**: Codex `workspace-write` sandbox. Prompted to keep changes focused, commit locally, avoid network access, and leave push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Codex read-only sandbox with GitHub network access. Prompted to inspect diffs, run validation commands, and return a structured verdict without changing code.
+**Cloud**: Native Codex for Linear delegation. Codex cloud selects the configured environment and posts progress back to Linear.
+
+**Ops**: Human-gated and never run unattended.
 
 ## Design decisions
 
 - **Runner pushes, not agents.** Agents commit locally; the runner handles `git push` and `gh pr create`. This prevents agents from pushing broken code.
-- **Sequential processing.** The drain command processes one ticket at a time with a lock file to prevent concurrent runs.
-- **No dependency resolution.** The runner trusts that `agent-ready` tickets are actually ready. Only label a ticket when its dependencies are satisfied.
+- **Bounded concurrency.** Drain uses the configured concurrency limit and a lock file prevents overlapping drain invocations.
+- **Dependency safety.** Organize strips `agent-ready` from blocked tickets, and run checks active blockers again before committing resources.
+- **GitHub-native review.** Codex review feedback stays in GitHub. TaskRunner only requests review and reconciles PR merge or close state with Linear.
 - **Project-scoped config.** Each Linear project maps to a repo, so one Linear workspace can drive multiple repos.

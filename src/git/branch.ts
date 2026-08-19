@@ -73,13 +73,6 @@ export function createPR(
 }
 
 /**
- * Add a label to a PR
- */
-export function addPRLabel(prUrl: string, label: string): void {
-  execGh(["pr", "edit", prUrl, "--add-label", label], { timeout: 15_000 });
-}
-
-/**
  * Add a comment to a PR
  */
 export function addPRComment(prUrl: string, body: string): void {

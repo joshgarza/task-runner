@@ -1,19 +1,17 @@
-// Full pipeline: fetch → worktree → agent → validate → push → PR → review
+// Full pipeline: fetch, route, implement, validate, create PR, request review.
 
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
-import { transitionIssue, addComment, createChildIssue, updateIssue } from "../linear/mutations.ts";
+import { transitionIssue, addComment, updateIssue } from "../linear/mutations.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
-import { hasCommits, pushBranch, createPR, addPRLabel, addPRComment, getCommitStats } from "../git/branch.ts";
+import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
 import { getGitHubRepository } from "../git/remote.ts";
 import * as comments from "../linear/comments.ts";
 import { runLocalCodex } from "../agents/spawn.ts";
 import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
-import { buildReviewPrompt, REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
+import { requestCodexReview } from "./review.ts";
 import { validateAgentOutput } from "../validation/validate.ts";
 import {
   buildCloudDelegationComment,
@@ -26,7 +24,6 @@ import type {
   ProjectConfig,
   RunOptions,
   RunResult,
-  ReviewVerdict,
   TaskRunnerConfig,
 } from "../types.ts";
 
@@ -265,57 +262,18 @@ export async function runIssue(
     // 11. Link PR to Linear (retry + fallback to ensure PR URL is always persisted)
     await postPRLink(issue.id, issue.teamKey, prUrl, issue.description, identifier);
 
-    // 12. Spawn review agent
-    let verdict: ReviewVerdict | undefined;
+    // 12. Request native GitHub Codex review. GitHub owns review feedback;
+    // TaskRunner only records the request and reconciles final PR state.
+    const reviewRequest = await requestCodexReview(prUrl, identifier);
     try {
-      verdict = await runReview(issue, projectConfig, prUrl, worktreePath, config, identifier);
+      await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
+      await addComment(issue.id, comments.nativeReviewRequested({
+        prUrl,
+        requested: reviewRequest.requested,
+        error: reviewRequest.error,
+      }));
     } catch (err: any) {
-      log("WARN", identifier, `Review failed (non-fatal): ${err.message}`);
-    }
-
-    // 13. Act on verdict
-    if (verdict) {
-      if (verdict.approved) {
-        log("OK", identifier, "Review: APPROVED");
-        try {
-          if (config.github.reviewApprovedLabel) {
-            addPRLabel(prUrl, config.github.reviewApprovedLabel);
-          }
-          await transitionIssue(issue.id, issue.teamKey, config.linear.inReviewState);
-          await addComment(issue.id, comments.reviewPassed({ verdict, prUrl }));
-        } catch (err: any) {
-          log("WARN", identifier, `Failed to label/transition after approval: ${err.message}`);
-        }
-      } else {
-        log("WARN", identifier, `Review: NEEDS FIXES — ${verdict.summary}`);
-        try {
-          const issueBody = [
-            `## Review Feedback for ${issue.identifier}`,
-            "",
-            verdict.summary,
-            "",
-            "### Issues",
-            ...verdict.issues.map(
-              (i) => `- **${i.severity}** (${i.file}): ${i.description}`
-            ),
-            "",
-            `PR: ${prUrl}`,
-          ].join("\n");
-
-          const childId = await createChildIssue(
-            issue.id,
-            issue.teamKey,
-            `Fix review feedback: ${issue.identifier}`,
-            issueBody,
-            [config.linear.agentLabel],
-            issue.projectId
-          );
-          log("INFO", identifier, `Created fix ticket: ${childId}`);
-          addPRComment(prUrl, `Review needs fixes. Created follow-up ticket: ${childId}\n\n${verdict.summary}`);
-        } catch (err: any) {
-          log("WARN", identifier, `Failed to create fix ticket: ${err.message}`);
-        }
-      }
+      log("WARN", identifier, `Failed to record native review state in Linear: ${err.message}`);
     }
 
     pipelineSucceeded = true;
@@ -325,7 +283,7 @@ export async function runIssue(
       success: true,
       executionRoute,
       prUrl,
-      reviewVerdict: verdict,
+      reviewRequested: reviewRequest.requested,
       durationMs: Date.now() - startTime,
       attempts,
     };
@@ -391,48 +349,6 @@ async function delegateCloudIssue(
     durationMs: Date.now() - startTime,
     attempts: 0,
   };
-}
-
-async function runReview(
-  issue: any,
-  projectConfig: any,
-  prUrl: string,
-  worktreePath: string,
-  config: any,
-  identifier: string
-): Promise<ReviewVerdict> {
-  const reviewPrompt = buildReviewPrompt(issue, projectConfig, prUrl);
-
-  const reviewResult = await runLocalCodex({
-    prompt: reviewPrompt,
-    cwd: worktreePath,
-    model: config.defaults.reviewModel,
-    reasoningEffort: config.defaults.reviewReasoningEffort,
-    profile: "read",
-    networkAccessEnabled: true,
-    timeoutMs: config.defaults.agentTimeoutMs,
-    context: `${identifier}-review`,
-    outputSchema: REVIEW_VERDICT_SCHEMA,
-  });
-
-  // Parse review output as JSON
-  return parseReviewVerdict(reviewResult.output, identifier);
-}
-
-function parseReviewVerdict(output: string, issueId: string): ReviewVerdict {
-  try {
-    return JSON.parse(output) as ReviewVerdict;
-  } catch (err: any) {
-    log("WARN", issueId, `Failed to parse review verdict JSON: ${err.message}`);
-    return {
-      approved: false,
-      summary: "Review verdict JSON was malformed.",
-      issues: [],
-      testsPass: false,
-      lintPass: false,
-      tscPass: false,
-    };
-  }
 }
 
 async function rollbackInProgress(

@@ -113,11 +113,6 @@ export function loadConfig(): TaskRunnerConfig {
     defaults: {
       model: defaultModel,
       reasoningEffort: defaultReasoningEffort,
-      reviewModel: resolveModel(raw.defaults?.reviewModel, defaultModel),
-      reviewReasoningEffort: resolveReasoningEffort(
-        raw.defaults?.reviewReasoningEffort,
-        defaultReasoningEffort
-      ),
       contextModel: resolveModel(raw.defaults?.contextModel, defaultModel),
       contextReasoningEffort: resolveReasoningEffort(
         raw.defaults?.contextReasoningEffort,
@@ -129,7 +124,6 @@ export function loadConfig(): TaskRunnerConfig {
     },
     github: {
       prLabels: raw.github?.prLabels ?? ["agent-generated"],
-      reviewApprovedLabel: raw.github?.reviewApprovedLabel ?? undefined,
     },
   };
 
