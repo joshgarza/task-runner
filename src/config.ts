@@ -105,6 +105,7 @@ export function loadConfig(): TaskRunnerConfig {
     linear: {
       agentLabel: raw.linear?.agentLabel ?? "agent-ready",
       agentFailedLabel: raw.linear?.agentFailedLabel ?? "agent-failed",
+      trustedCommentAuthorIds: raw.linear?.trustedCommentAuthorIds ?? [],
       needsApprovalLabel: raw.linear?.needsApprovalLabel ?? "needs-human-approval",
       inProgressState: raw.linear?.inProgressState ?? "In Progress",
       inReviewState: raw.linear?.inReviewState ?? "In Review",

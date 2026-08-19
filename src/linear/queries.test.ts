@@ -25,8 +25,24 @@ describe("selectCommentBodiesByAuthor", () => {
     ];
 
     assert.deepEqual(
-      await selectCommentBodiesByAuthor(comments, "runner-user"),
+      await selectCommentBodiesByAuthor(comments, new Set(["runner-user"])),
       ["trusted marker"]
+    );
+  });
+
+  it("retains comments from explicitly migrated TaskRunner identities", async () => {
+    const comments = [
+      { body: "current marker", authorId: "current-runner" },
+      { body: "historical marker", authorId: "previous-runner" },
+      { body: "untrusted marker", authorId: "other-user" },
+    ];
+
+    assert.deepEqual(
+      await selectCommentBodiesByAuthor(
+        comments,
+        new Set(["current-runner", "previous-runner"])
+      ),
+      ["current marker", "historical marker"]
     );
   });
 });

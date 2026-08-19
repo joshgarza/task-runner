@@ -2,6 +2,7 @@
 
 import { getLinearClient } from "./client.ts";
 import { collectAllNodes } from "./labels.ts";
+import { loadConfig } from "../config.ts";
 import type { LinearIssue } from "../types.ts";
 
 let taskRunnerCommentAuthorId: Promise<string> | undefined;
@@ -39,26 +40,35 @@ const ISSUE_COMMENTS_QUERY = `
 
 function getTaskRunnerCommentAuthorId(): Promise<string> {
   if (!taskRunnerCommentAuthorId) {
-    taskRunnerCommentAuthorId = Promise.resolve(getLinearClient().viewer).then(
+    const lookup = Promise.resolve(getLinearClient().viewer).then(
       (viewer) => viewer.id
     );
+    taskRunnerCommentAuthorId = lookup.catch((error) => {
+      taskRunnerCommentAuthorId = undefined;
+      throw error;
+    });
   }
   return taskRunnerCommentAuthorId;
 }
 
 export async function selectCommentBodiesByAuthor(
   allComments: CommentRecord[],
-  authorId: string
+  authorIds: ReadonlySet<string>
 ): Promise<string[]> {
   return allComments
-    .filter((comment) => comment.authorId === authorId)
+    .filter((comment) => comment.authorId !== undefined && authorIds.has(comment.authorId))
     .map((comment) => comment.body);
 }
 
 async function getTaskRunnerCommentBodies(allComments: CommentRecord[]): Promise<string[]> {
+  const currentAuthorId = await getTaskRunnerCommentAuthorId();
+  const authorIds = new Set([
+    currentAuthorId,
+    ...loadConfig().linear.trustedCommentAuthorIds,
+  ]);
   return selectCommentBodiesByAuthor(
     allComments,
-    await getTaskRunnerCommentAuthorId()
+    authorIds
   );
 }
 

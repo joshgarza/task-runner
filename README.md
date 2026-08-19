@@ -63,6 +63,7 @@ Edit `task-runner.config.json` to map Linear projects to repos:
   "linear": {
     "agentLabel": "agent-ready",
     "agentFailedLabel": "agent-failed",
+    "trustedCommentAuthorIds": [],
     "inProgressState": "In Progress",
     "inReviewState": "In Review",
     "todoState": "Todo"
@@ -83,6 +84,11 @@ Edit `task-runner.config.json` to map Linear projects to repos:
 ```
 
 Project names must match Linear project names exactly. `prLabels` defaults to empty, with no automatic labels.
+
+TaskRunner trusts automation markers from the Linear user associated with the
+current API key. Before rotating that key to a different Linear identity, add
+the previous identity's user ID to `linear.trustedCommentAuthorIds` so existing
+failure, quarantine, and PR history remains valid.
 
 ## Usage
 

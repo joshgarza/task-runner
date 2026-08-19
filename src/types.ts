@@ -19,6 +19,7 @@ export interface ProjectConfig {
 export interface LinearConfig {
   agentLabel: string;
   agentFailedLabel: string;
+  trustedCommentAuthorIds: string[];
   needsApprovalLabel: string;
   inProgressState: string;
   inReviewState: string;
