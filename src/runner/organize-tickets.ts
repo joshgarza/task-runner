@@ -7,8 +7,9 @@ import { transitionIssue, addComment } from "../linear/mutations.ts";
 import { codebaseContext as formatContextComment, CONTEXT_SENTINEL } from "../linear/comments.ts";
 import { collectAllNodes, resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
-import { spawnAgent } from "../agents/spawn.ts";
+import { runLocalCodex } from "../agents/spawn.ts";
 import { buildContextPrompt, CONTEXT_RESULT_SCHEMA } from "../agents/context-prompt.ts";
+import { isHumanGatedRoute, resolveExecutionRoute } from "../execution-route.ts";
 import type { OrganizeTicketsOptions, OrganizeTicketResult, ContextResult, LinearIssue } from "../types.ts";
 
 /**
@@ -21,12 +22,12 @@ async function gatherContext(issue: LinearIssue, repoPath: string): Promise<Cont
 
   log("INFO", issue.identifier, `Gathering codebase context...`);
 
-  const result = await spawnAgent({
+  const result = await runLocalCodex({
     prompt,
     cwd: repoPath,
     model: config.defaults.contextModel,
     reasoningEffort: config.defaults.contextReasoningEffort,
-    agentType: "context",
+    profile: "read",
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `context-${issue.identifier}`,
     outputSchema: CONTEXT_RESULT_SCHEMA,
@@ -85,9 +86,32 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
   const results: OrganizeTicketResult[] = [];
 
   for (const issue of issues) {
+    let executionRoute;
+    try {
+      executionRoute = resolveExecutionRoute(issue.labels).route;
+    } catch (err: any) {
+      const staleLabels = issue.labels.filter(
+        (label) => label === agentLabel || label.startsWith("agent:")
+      );
+      const result = await applyLabelChanges(issue.id, teamLabels, [], staleLabels, dryRun);
+      log("WARN", issue.identifier, `${prefix}Invalid execution routing: ${err.message}`);
+      results.push({
+        identifier: issue.identifier,
+        title: issue.title,
+        action: "blocked",
+        labelsAdded: [],
+        labelsRemoved: result.labelsRemoved,
+        reason: `Invalid execution routing: ${err.message}`,
+      });
+      continue;
+    }
+
     // Reject tickets requiring human approval — never label these agent-ready,
-    // and strip any stale agent-ready or agent:<type> labels that may exist.
-    if (issue.labels.includes(config.linear.needsApprovalLabel)) {
+    // and strip any stale ready or legacy agent labels that may exist.
+    if (
+      issue.labels.includes(config.linear.needsApprovalLabel) ||
+      isHumanGatedRoute(executionRoute)
+    ) {
       const staleAgentLabels = issue.labels.filter(
         (l) => l === agentLabel || l.startsWith("agent:")
       );
@@ -101,14 +125,17 @@ export async function organizeTickets(opts: OrganizeTicketsOptions): Promise<Org
         }
       }
 
-      log("INFO", issue.identifier, `${prefix}Needs human approval — skipping`);
+      const reason = isHumanGatedRoute(executionRoute)
+        ? "Human-gated ops route"
+        : "Needs human approval";
+      log("INFO", issue.identifier, `${prefix}${reason}, skipping`);
       results.push({
         identifier: issue.identifier,
         title: issue.title,
         action: "blocked",
         labelsAdded: [],
         labelsRemoved,
-        reason: "Needs human approval",
+        reason,
       });
       continue;
     }

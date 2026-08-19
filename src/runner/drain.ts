@@ -6,6 +6,7 @@ import { acquireLock, releaseLock } from "../lock.ts";
 import { fetchAgentReadyIssues, fetchStaleIssues, fetchForwardBlockCount } from "../linear/queries.ts";
 import { runIssue } from "./run-issue.ts";
 import { runWithConcurrency } from "../concurrency.ts";
+import { resolveExecutionRoute } from "../execution-route.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
 export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
@@ -32,6 +33,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
       try {
         const stale = await fetchStaleIssues(label, config.linear.inProgressState, projectName);
         for (const issue of stale) {
+          if (!isLocalStaleIssue(issue)) continue;
           log("WARN", issue.identifier, `Stale: "${issue.title}" is In Progress with "${label}" label — may need manual attention (${issue.url})`);
         }
       } catch {
@@ -134,7 +136,7 @@ async function processIssue(issue: LinearIssue): Promise<RunResult> {
     const result = await runIssue(issue.identifier);
 
     if (result.success) {
-      log("OK", issue.identifier, `Pipeline complete — PR: ${result.prUrl}`);
+      log("OK", issue.identifier, formatSuccessfulRun(result));
     } else {
       log("ERROR", issue.identifier, `Pipeline failed: ${result.error}`);
     }
@@ -150,6 +152,21 @@ async function processIssue(issue: LinearIssue): Promise<RunResult> {
       attempts: 0,
     };
   }
+}
+
+export function isLocalStaleIssue(issue: Pick<LinearIssue, "labels">): boolean {
+  try {
+    return resolveExecutionRoute(issue.labels).route !== "cloud";
+  } catch {
+    return true;
+  }
+}
+
+export function formatSuccessfulRun(result: RunResult): string {
+  if (result.executionRoute === "cloud") {
+    return "Cloud delegation complete";
+  }
+  return result.prUrl ? `Pipeline complete: PR ${result.prUrl}` : "Pipeline complete";
 }
 
 function logSummary(results: RunResult[], dryRun: boolean): void {

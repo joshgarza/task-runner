@@ -2,7 +2,7 @@
 
 import { loadConfig } from "../config.ts";
 import { log } from "../logger.ts";
-import { spawnAgent } from "../agents/spawn.ts";
+import { runLocalCodex } from "../agents/spawn.ts";
 import { REVIEW_VERDICT_SCHEMA } from "../agents/review-prompt.ts";
 import type { ReviewVerdict, ProjectConfig } from "../types.ts";
 
@@ -72,12 +72,13 @@ Output ONLY a JSON object:
 
 Approve if: tests pass, lint passes, no critical issues, at most 2 major issues.`;
 
-  const result = await spawnAgent({
+  const result = await runLocalCodex({
     prompt,
     cwd: projectConfig.repoPath,
     model: config.defaults.reviewModel,
     reasoningEffort: config.defaults.reviewReasoningEffort,
-    agentType: "reviewer",
+    profile: "read",
+    networkAccessEnabled: true,
     timeoutMs: config.defaults.agentTimeoutMs,
     context: `review-${prNumber}`,
     outputSchema: REVIEW_VERDICT_SCHEMA,

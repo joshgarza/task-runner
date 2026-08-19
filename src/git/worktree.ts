@@ -12,7 +12,7 @@ const WORKTREE_DIR = ".task-runner-worktrees";
  * - Traditional repo: repoPath/.git exists → use repoPath
  * - Hub layout: repoPath/main/.git exists → use repoPath/main
  */
-function resolveGitDir(repoPath: string): string {
+export function resolveGitDir(repoPath: string): string {
   if (existsSync(resolve(repoPath, ".git"))) {
     return repoPath;
   }

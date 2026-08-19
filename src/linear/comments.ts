@@ -18,7 +18,7 @@ export const CONTEXT_SENTINEL = "## Codebase Context (auto-generated)";
 export function startWork(opts: {
   identifier: string;
   title: string;
-  agentType: string;
+  executionRoute: string;
   model: string;
   reasoningEffort: string;
   maxAttempts: number;
@@ -29,7 +29,7 @@ export function startWork(opts: {
     `| | |`,
     `|---|---|`,
     `| **Issue** | ${opts.identifier}: ${opts.title} |`,
-    `| **Agent** | \`${opts.agentType}\` |`,
+    `| **Execution** | \`${opts.executionRoute}\` |`,
     `| **Model** | \`${opts.model}\` |`,
     `| **Reasoning** | \`${opts.reasoningEffort}\` |`,
     `| **Max attempts** | ${opts.maxAttempts} |`,
@@ -78,7 +78,7 @@ export function agentFailed(opts: {
     `### Next Steps`,
     ``,
     `- Review the errors above and update the ticket description with more context`,
-    `- Check if the issue requires capabilities not available to the agent`,
+    `- Check whether the issue should use local, cloud, or human-gated execution`,
     `- Re-queue by moving the ticket back to **Todo** with the \`agent-ready\` label`,
   ].join("\n");
 }
@@ -124,62 +124,8 @@ export function rollback(opts: {
     `### Next Steps`,
     ``,
     `- Review the error and update the ticket with additional context`,
-    `- If the error is a permission issue, check agent type capabilities`,
+    `- If the work requires operations access, route it to human-gated ops`,
     `- Re-queue by adding the \`agent-ready\` label`,
-  ].join("\n");
-}
-
-export function escalationNeeded(opts: {
-  baseAgentType: string;
-  missingCapabilities: string[];
-  proposalId: string;
-}): string {
-  return [
-    `## Agent Permission Escalation Needed`,
-    ``,
-    `Agent type \`${opts.baseAgentType}\` failed with missing capabilities:`,
-    ...opts.missingCapabilities.map((c) => `- \`${c}\``),
-    ``,
-    `**Proposal ID:** \`${opts.proposalId}\``,
-    ``,
-    `### Actions`,
-    ``,
-    `**Approve:**`,
-    "```bash",
-    `node --experimental-strip-types src/cli.ts approve-agent ${opts.proposalId}`,
-    "```",
-    ``,
-    `**Reject:**`,
-    "```bash",
-    `node --experimental-strip-types src/cli.ts approve-agent ${opts.proposalId} --reject --reason "..."`,
-    "```",
-  ].join("\n");
-}
-
-export function proposalApproved(opts: {
-  proposalId: string;
-  proposedAgentType: string;
-}): string {
-  return [
-    `## Proposal Approved`,
-    ``,
-    `Proposal \`${opts.proposalId}\` approved.`,
-    `New agent type \`${opts.proposedAgentType}\` added to registry.`,
-    ``,
-    `Ticket re-queued for processing.`,
-  ].join("\n");
-}
-
-export function proposalRejected(opts: {
-  proposalId: string;
-  reason: string;
-}): string {
-  return [
-    `## Proposal Rejected`,
-    ``,
-    `Proposal \`${opts.proposalId}\` rejected.`,
-    ``,
-    `**Reason:** ${opts.reason}`,
   ].join("\n");
 }
 

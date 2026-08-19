@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-task-runner is a Linear-powered agent orchestration tool that now runs through the Codex SDK. It pulls tickets from Linear, spins up Codex-backed agents in isolated worktrees, creates PRs, runs automated code reviews, and queues approved work for human merge.
+task-runner is a thin Linear-powered Codex router. It keeps local unattended execution, retries, validation, worktree isolation, PR creation, and Linear reconciliation while delegating optional cloud work to Codex for Linear and keeping operations work human-gated.
 
 ## Linear
 - Team: `JOS`
@@ -158,42 +158,20 @@ task-runner organize-tickets --team JOS --project my-project
 task-runner organize-tickets --team JOS --context --dry-run
 ```
 
-### `list-agents`
-Show all registered agent types from the RBAC registry.
-```bash
-task-runner list-agents
-task-runner list-agents --verbose    # Show full tool lists
-```
-
-### `pending-proposals`
-List agent type proposals awaiting human approval.
-```bash
-task-runner pending-proposals
-task-runner pending-proposals --all    # Include resolved proposals
-```
-
-### `approve-agent <id>`
-Approve or reject an agent type proposal.
-```bash
-task-runner approve-agent <proposal-id>
-task-runner approve-agent <proposal-id> --reject --reason "Too broad tool access"
-```
-
 ## Architecture
 
 ### Pipeline Steps (run command)
 
 1. **Fetch** issue from Linear (title, description, comments, project)
-2. **Validate** issue is in Todo or Backlog state
-3. **Transition** Linear → In Progress, add comment
-4. **Create worktree** at `<repo>/.task-runner-worktrees/<issue-id>/`
-5. **Spawn worker agent** in a Codex `workspace-write` sandbox
-6. **Validate output** — commits exist, tests pass, lint clean
-7. **Retry** if validation fails (up to `maxAttempts`)
-8. **Push branch** and **create PR** (runner does this, not the agent)
-9. **Spawn review agent** in a read-only sandbox to evaluate the PR
-10. **Act on verdict** — label PR if approved, create fix ticket if not
-11. **Clean up** worktree
+2. **Route** to local, cloud, or human-gated ops execution
+3. **Validate** state, approval, and blocking relations
+4. **Delegate cloud**, reject ops, or continue with local execution
+5. **Transition** local work to In Progress and create an isolated worktree
+6. **Run local Codex** in a `workspace-write` sandbox
+7. **Validate and retry** until output passes or `maxAttempts` is exhausted
+8. **Push branch** and **create PR**
+9. **Run review** and reconcile Linear state
+10. **Clean up** the local worktree
 
 ### Source Layout
 
@@ -216,17 +194,9 @@ src/
     organize-tickets.ts # Triage: label blocked/unblocked, gather context
   agents/
     spawn.ts          # Codex SDK execution wrapper
-    registry.ts       # RBAC agent type registry (load, resolve, validate)
-    dispatcher.ts     # Dispatches issues to agents by type
-    failure-analysis.ts # Analyzes agent failures, proposes new types
-    proposals.ts      # Agent type proposal CRUD (approve/reject)
     worker-prompt.ts  # System prompt for worker agents
     review-prompt.ts  # System prompt for review agents
     context-prompt.ts # System prompt for context-gathering agents
-    agent-registry.json   # Agent type definitions
-    worker-tools.json     # Legacy tool whitelist for worker agents
-    review-tools.json     # Legacy tool whitelist for review agents
-    context-tools.json    # Legacy tool whitelist for context agents
   git/
     branch.ts         # Branch creation, push, PR creation
     worktree.ts       # Worktree create/remove for target repos
@@ -239,17 +209,19 @@ src/
     validate.ts       # Output validation (commits, tests, lint)
 ```
 
-### Agent Permissions
+### Execution Routes
 
-**Worker** (implements code): Runs in a Codex `workspace-write` sandbox. The prompt constrains scope, commits locally, and leaves push/PR creation to the runner.
+**Local**: Runs in a Codex `workspace-write` sandbox. The prompt constrains scope, commits locally, and leaves push/PR creation to the runner.
 
-**Reviewer** (reviews PRs): Runs in a Codex read-only sandbox with GitHub network access and returns a structured JSON verdict without changing code.
+**Cloud**: Delegated by mentioning `@Codex` on the Linear issue, pinned to the repository inferred from its Git remote when possible.
+
+**Ops**: Human-gated. Tickets labeled `execution:ops` never run unattended.
 
 ### Design Decisions
 - **Runner pushes, not agents.** Agents commit locally; the runner handles `git push` and `gh pr create`. This prevents agents from pushing broken code.
 - **Concurrent drain with lock.** The drain command runs multiple agents in parallel (configurable `--concurrency`). A lock file prevents overlapping drain invocations.
 - **Dependency-aware prioritization.** `organize-tickets` detects blocked issues via Linear relations and strips `agent-ready` labels from blocked tickets. Drain processes unblocked issues first.
-- **RBAC agent registry.** Agent types are still defined in `agent-registry.json`, but Codex enforcement now comes primarily from sandbox mode and prompts rather than Claude-style tool whitelists. The dispatcher still selects agent types per-issue, and new types are still proposed by failure analysis for human approval.
+- **Fail-closed routing.** Unknown, conflicting, and operations routes are not allowed into unattended implementation.
 - **Project-scoped config.** Each Linear project maps to a repo, so one Linear workspace can drive multiple repos.
 
 ## Config Format

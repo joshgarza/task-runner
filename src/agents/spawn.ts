@@ -2,7 +2,6 @@
 
 import os from "node:os";
 import { log } from "../logger.ts";
-import { loadRegistry, resolveAgentType } from "./registry.ts";
 import type { AgentResult, ModelReasoningEffort } from "../types.ts";
 
 type ApprovalMode = "never" | "on-request" | "on-failure" | "untrusted";
@@ -59,69 +58,38 @@ async function getCodexClient(): Promise<CodexClientLike> {
   return codexClientPromise;
 }
 
-export interface SpawnOptions {
+export interface LocalCodexOptions {
   prompt: string;
   cwd: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  toolsFile?: string; // legacy compatibility only
-  agentType?: string;
+  profile: "write" | "read";
+  networkAccessEnabled?: boolean;
   timeoutMs: number;
   context: string;
   outputSchema?: unknown;
 }
 
-function resolveSandboxMode(agentType?: string): SandboxMode {
-  if (agentType === "reviewer" || agentType === "context") {
-    return "read-only";
-  }
-
-  return "workspace-write";
-}
-
-function resolveNetworkAccess(agentType?: string): boolean {
-  // Standalone and pipeline PR review rely on GitHub CLI/API access.
-  return agentType === "reviewer";
-}
-
-/**
- * Codex does not support the previous allowedTools model. Keep the registry
- * lookup for agent existence while enforcing isolation through sandbox mode.
- */
-function resolveSpawnProfile(opts: SpawnOptions): {
+function resolveExecutionProfile(opts: LocalCodexOptions): {
   sandboxMode: SandboxMode;
   networkAccessEnabled: boolean;
 } {
-  if (opts.agentType) {
-    const registry = loadRegistry();
-    const resolved = resolveAgentType(opts.agentType, registry);
-    return {
-      sandboxMode: resolveSandboxMode(resolved.name),
-      networkAccessEnabled: resolveNetworkAccess(resolved.name),
-    };
-  }
-
-  if (opts.toolsFile) {
-    return {
-      sandboxMode: "workspace-write",
-      networkAccessEnabled: false,
-    };
-  }
-
-  throw new Error("SpawnOptions requires either agentType or toolsFile");
+  return {
+    sandboxMode: opts.profile === "write" ? "workspace-write" : "read-only",
+    networkAccessEnabled: opts.networkAccessEnabled ?? false,
+  };
 }
 
 /**
  * Run an agent turn through the Codex SDK.
  */
-export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
-  const { sandboxMode, networkAccessEnabled } = resolveSpawnProfile(opts);
-  const agentLabel = opts.agentType ? `[${opts.agentType}]` : `[${opts.toolsFile}]`;
+export async function runLocalCodex(opts: LocalCodexOptions): Promise<AgentResult> {
+  const { sandboxMode, networkAccessEnabled } = resolveExecutionProfile(opts);
 
   log(
     "INFO",
     opts.context,
-    `Spawning codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled} ${agentLabel}`
+    `Running local Codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=${networkAccessEnabled}`
   );
 
   const startTime = Date.now();
@@ -170,7 +138,7 @@ export async function spawnAgent(opts: SpawnOptions): Promise<AgentResult> {
 
   const durationMs = Date.now() - startTime;
   const durationSec = (durationMs / 1000).toFixed(1);
-  log("INFO", opts.context, `Agent finished in ${durationSec}s (exit=${exitCode === 0 ? "ok" : "fail"})`);
+  log("INFO", opts.context, `Local Codex finished in ${durationSec}s (exit=${exitCode === 0 ? "ok" : "fail"})`);
 
   return {
     success: exitCode === 0,
