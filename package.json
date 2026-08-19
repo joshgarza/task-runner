@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
     "run-issue": "node --experimental-strip-types src/cli.ts run",
     "drain": "node --experimental-strip-types src/cli.ts drain",
     "review": "node --experimental-strip-types src/cli.ts review",

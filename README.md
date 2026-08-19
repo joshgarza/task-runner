@@ -134,6 +134,12 @@ task-runner/        # Hub directory (not a repo)
 
 Direct commits to `main` are blocked by git hooks. Work on feature worktrees, then PR and merge via GitHub.
 
+Run the test suite with:
+
+```bash
+npm test
+```
+
 ## Pipeline steps
 
 1. **Fetch** the Linear issue and resolve its execution route.
