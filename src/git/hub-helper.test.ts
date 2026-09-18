@@ -30,12 +30,12 @@ test("hub creation starts from main and never tries to copy secrets by default",
   for (const command of ["cp", "npm"]) chmodSync(join(bin, command), 0o755);
   const helper = join(hub, "create-worktree.sh");
   copyFileSync(new URL("../../scripts/hub/create-worktree.sh", import.meta.url), helper);
-  const result = spawnSync("bash", [helper, "audit", "feat/audit"], {
+  const result = spawnSync(helper, ["audit", "feat/audit"], {
     env: { ...env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(git("-C", join(hub, "audit"), "symbolic-ref", "--short", "HEAD"), "feat/audit");
   assert.equal(git("-C", bare, "rev-parse", "feat/audit"), git("-C", bare, "rev-parse", "main"));
-  const invalid = spawnSync("bash", [helper, "../outside"], { env, encoding: "utf8" });
+  const invalid = spawnSync(helper, ["../outside"], { env, encoding: "utf8" });
   assert.equal(invalid.status, 1);
 });
