@@ -1,11 +1,10 @@
-// Load task-runner.config.json + .env file
+// Load project configuration. Credentials must already be in the environment.
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ModelReasoningEffort, TaskRunnerConfig } from "./types.ts";
 
 const CONFIG_FILENAME = "task-runner.config.json";
-const ENV_FILENAME = ".env";
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   opus: "gpt-5.4",
 };
@@ -34,44 +33,6 @@ function resolveReasoningEffort(
     ? value as ModelReasoningEffort
     : fallback;
 }
-
-// Load .env file into process.env (once, at import time)
-function loadDotEnv(): void {
-  const candidates = [
-    resolve(import.meta.dirname, "..", ENV_FILENAME),
-    resolve(process.cwd(), ENV_FILENAME),
-  ];
-
-  for (const envPath of candidates) {
-    if (!existsSync(envPath)) continue;
-
-    const content = readFileSync(envPath, "utf-8");
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-
-      const eqIndex = trimmed.indexOf("=");
-      if (eqIndex === -1) continue;
-
-      const key = trimmed.slice(0, eqIndex).trim();
-      let value = trimmed.slice(eqIndex + 1).trim();
-
-      // Strip surrounding quotes
-      if ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-
-      // Don't override existing env vars
-      if (!(key in process.env)) {
-        process.env[key] = value;
-      }
-    }
-    return; // Only load the first .env found
-  }
-}
-
-loadDotEnv();
 
 let cachedConfig: TaskRunnerConfig | null = null;
 
@@ -137,7 +98,10 @@ export function loadConfig(): TaskRunnerConfig {
 export function getLinearApiKey(): string {
   const key = process.env.LINEAR_API_KEY;
   if (!key) {
-    throw new Error("LINEAR_API_KEY environment variable is not set");
+    throw new Error(
+      "LINEAR_API_KEY environment variable is not set. Ask the operator to verify " +
+      "it is exported to this process. TaskRunner does not load secret files."
+    );
   }
   return key;
 }
