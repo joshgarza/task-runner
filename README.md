@@ -85,9 +85,9 @@ Edit `task-runner.config.json` to map Linear projects to repos:
     "todoState": "Todo"
   },
   "defaults": {
-    "model": "gpt-5.4",
+    "model": "gpt-5.6-terra",
     "reasoningEffort": "high",
-    "contextModel": "gpt-5.4",
+    "contextModel": "gpt-5.6-terra",
     "contextReasoningEffort": "medium",
     "maxAttempts": 2,
     "maxDrainFailures": 2,
@@ -111,7 +111,7 @@ failure, quarantine, and PR history remains valid.
 ```bash
 # Run a single issue through the full pipeline
 task-runner run JOS-47
-task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
+task-runner run JOS-47 --model gpt-5.6-terra --reasoning-effort high
 
 # Dry run, fetch and resolve routing without executing work
 task-runner run JOS-47 --dry-run

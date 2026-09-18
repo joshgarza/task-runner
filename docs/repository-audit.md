@@ -93,6 +93,31 @@ to configure the launch environment, never source `.env` from an agent.
 Existing cron wrappers intentionally load their own environment for human-
 configured unattended operation; agents must not invoke those wrappers.
 
+### Subscription runtime deployment
+
+The worker uses the CLI bundled with `@openai/codex-sdk`, not a global `codex`
+installation. JOS-293 updates that dependency to the 0.154 release line and the
+worker default to `gpt-5.6-terra` with `high` reasoning. Context gathering keeps
+its `medium` effort. Authentication and network/sandbox restrictions are unchanged.
+Explicit model selections remain explicit; a source-code default does not
+override an old model pinned in local configuration.
+
+After merging a runtime upgrade, run `npm ci --ignore-scripts --no-audit --no-fund`
+in the launch worktree. Preserve the non-secret `task-runner.config.json` on
+GitHub before changing its live settings. For this deployment, set only:
+
+- `defaults.model`: `gpt-5.6-terra`
+- `defaults.reasoningEffort`: `high`
+- `projects.task-runner.testCommand`: `npm test`
+
+Leave other projects' commands and unrelated configuration intact. Verify the
+bundled CLI version and effective config, then requeue JOS-291 for the scheduled
+acceptance run. The live run, not just a successful SDK import, must prove that
+the selected model works with the signed-in account and the real tests execute.
+
+See the official [Codex models](https://learn.chatgpt.com/docs/models) and
+[SDK documentation](https://learn.chatgpt.com/docs/codex-sdk) for compatibility.
+
 Future visual design work is tracked in JOS-289. It will use Ladle first, with
 a tool-independent contract for previews, design states, evidence, and approval.
 The architecture proposal goes to Josh before building that integration.

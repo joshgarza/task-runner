@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@linear/sdk": "^37.0.0",
-    "@openai/codex-sdk": "^0.114.0",
+    "@openai/codex-sdk": "^0.154.0",
     "commander": "^13.0.0"
   }
 }

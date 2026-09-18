@@ -109,7 +109,7 @@ node --experimental-strip-types src/cli.ts <command>
 Run a single Linear issue through the full pipeline.
 ```bash
 task-runner run JOS-47
-task-runner run JOS-47 --model gpt-5.4 --reasoning-effort high
+task-runner run JOS-47 --model gpt-5.6-terra --reasoning-effort high
 task-runner run JOS-47 --dry-run    # Fetch and resolve routing without executing work
 ```
 
@@ -252,7 +252,8 @@ src/
     "todoState": "Todo"
   },
   "defaults": {
-    "model": "gpt-5.4",
+    "model": "gpt-5.6-terra",
+    "reasoningEffort": "high",
     "maxAttempts": 2,
     "agentTimeoutMs": 900000
   },
