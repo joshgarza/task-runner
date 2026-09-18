@@ -42,11 +42,22 @@ npm install
 
 ### Configure
 
-Create `.env` with your Linear API key:
+TaskRunner reads `LINEAR_API_KEY` from its inherited process environment. It
+never discovers or loads `.env` files, including during imports and `--help`.
+Have the operator export the value through their normal credential setup before
+launching an interactive agent. If it is missing, the CLI stops and asks the
+operator to verify the environment; agents must not open secret files to fix it.
+
+For human-operated commands, Node's explicit opt-in loader is available:
 
 ```bash
-echo 'LINEAR_API_KEY=lin_api_...' > .env
+# Human use only, run from the configured main worktree.
+node --env-file=.env --experimental-strip-types src/cli.ts standup
 ```
+
+Existing `scripts/cron-drain.sh` and `scripts/cron-standup.sh` already explicitly
+load their configured environment before launching Node, so their behavior is
+unchanged. Agents must not invoke these secret-loading wrappers.
 
 Edit `task-runner.config.json` to map Linear projects to repos:
 

@@ -21,7 +21,8 @@ task-runner is a thin Linear-powered Codex router. It keeps local unattended exe
 ### Anti-Hallucination
 - NEVER modify a pipeline step without reading its source file first
 - NEVER assume config structure — check `src/types.ts` for `TaskRunnerConfig` and related types
-- Verify `.env` and `task-runner.config.json` exist before debugging config issues
+- The CLI uses inherited environment values only. Never inspect `.env` or other
+  secret files. Ask the operator to verify missing credentials.
 
 ### Verification Required
 - After modifying pipeline code, test with: `node --experimental-strip-types src/cli.ts run <issue-id> --dry-run`
@@ -178,7 +179,7 @@ task-runner organize-tickets --team JOS --context --dry-run
 ```
 src/
   cli.ts              # Entry point — commander-based CLI
-  config.ts           # Config and .env loading
+  config.ts           # Project config and inherited environment values
   types.ts            # All TypeScript interfaces
   logger.ts           # Structured logging
   lock.ts             # File-based lock for drain
