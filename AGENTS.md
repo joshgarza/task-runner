@@ -2,6 +2,16 @@
 
 See `CLAUDE.md` for repository workflow and architecture details.
 
+## Ownership and completion
+
+Josh owns architecture, repository prioritization, and archival decisions.
+The coordinating implementation agent owns the PR lifecycle: implement, test,
+publish, request `@codex review`, address real findings, and repeat review until
+the latest commit is clean. Merge only after that review and required checks
+complete, then reconcile Linear. Do not wait for Josh to perform routine merges
+within already approved scope. See `docs/repository-audit.md` for the protocol
+and audit boundaries.
+
 ## Code Review Rules
 
 - Verify unattended routing fails closed. `execution:ops`, unknown execution routes, conflicting route labels, human-approval labels, and active blockers must stop before worktree creation or delegation.

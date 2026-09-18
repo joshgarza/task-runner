@@ -16,6 +16,11 @@ Linear ticket (agent-ready label, Todo state)
 
 The runner handles local git operations, validation, retries, PR creation, and Linear reconciliation. Local implementation runs use a Codex `workspace-write` sandbox. Context runs use a read-only sandbox.
 
+The coordinating implementation agent owns review fixes, re-review, and merging.
+TaskRunner requests review; it does not run a background fix/merge loop.
+See [repository audit readiness](docs/repository-audit.md) for ownership,
+completion criteria, and the upcoming inventory's scope.
+
 ## Execution routing
 
 - No execution label or `execution:local`: run unattended through local Codex. Unlabeled tickets default to local for compatibility.

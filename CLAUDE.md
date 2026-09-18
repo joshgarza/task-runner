@@ -51,7 +51,8 @@ This repo uses a **bare repo + worktree** layout. Each branch has its own direct
 
 ### How to Work
 - **Start Claude from a worktree directory** (e.g. `task-runner/<feature>/`)
-- Each worktree is a full working copy with its own `node_modules`, `.env`, and config
+- Each worktree has its own `node_modules` and project config. Agent worktrees
+  inherit credentials and do not receive secret files.
 - All worktrees share the same git history via the bare repo
 - Feature worktrees are **temporary** — create for active work, delete after merging
 
@@ -60,7 +61,7 @@ This repo uses a **bare repo + worktree** layout. Each branch has its own direct
 From the hub directory (`task-runner/`):
 
 ```bash
-# Create a worktree (handles .env, config, npm install)
+# Create a worktree from main with project config and npm ci, without secrets
 ./create-worktree.sh <name> [branch-name]
 
 # Remove a worktree and its branch (after merge)
@@ -69,6 +70,10 @@ From the hub directory (`task-runner/`):
 # Validate all worktrees have required config
 ./check-worktrees.sh
 ```
+
+The versioned creation helper is `scripts/hub/create-worktree.sh`; deploy it to
+the hub's `create-worktree.sh` after review. `--with-secrets` preserves explicit
+human opt-in copying. Agents must never pass it.
 
 ### Merging to Main
 1. Work and commit on a feature worktree
