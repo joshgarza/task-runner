@@ -6,7 +6,7 @@ import type { ModelReasoningEffort, TaskRunnerConfig } from "./types.ts";
 
 const CONFIG_FILENAME = "task-runner.config.json";
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
-  opus: "gpt-5.4",
+  opus: "gpt-5.6-terra",
 };
 const VALID_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
   "minimal",
@@ -57,7 +57,7 @@ export function loadConfig(): TaskRunnerConfig {
 
   const configPath = findConfigPath();
   const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-  const defaultModel = resolveModel(raw.defaults?.model, "gpt-5.4");
+  const defaultModel = resolveModel(raw.defaults?.model, "gpt-5.6-terra");
   const defaultReasoningEffort = resolveReasoningEffort(raw.defaults?.reasoningEffort, "high");
 
   // Merge with defaults

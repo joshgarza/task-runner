@@ -30,10 +30,10 @@ const guard = `
   process.execArgv = [];
 `;
 
-function runGuarded(code: string, inheritedKey = "") {
+function runGuarded(code: string, inheritedKey = "", config: object = { projects: {} }) {
   const cwd = mkdtempSync(join(tmpdir(), "task-runner-config-test-"));
   try {
-    writeFileSync(join(cwd, "task-runner.config.json"), JSON.stringify({ projects: {} }));
+    writeFileSync(join(cwd, "task-runner.config.json"), JSON.stringify(config));
     return spawnSync(process.execPath, [
       "--experimental-strip-types", "--input-type=module", "-e", guard + code,
     ], {
@@ -78,5 +78,44 @@ describe("agent-safe configuration", () => {
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stdout + result.stderr, /Ask the operator to verify/);
     assert.doesNotMatch(result.stdout + result.stderr, /SECRET_FILE_ACCESS_BLOCKED/);
+  });
+});
+
+describe("subscription model configuration", () => {
+  function defaults(config: object) {
+    const result = runGuarded(`
+      const { loadConfig } = await import(${JSON.stringify(configUrl)});
+      console.log(JSON.stringify(loadConfig().defaults));
+    `, "", config);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+
+  it("defaults workers to Terra/high and context gathering to Terra/medium", () => {
+    const actual = defaults({ projects: {} });
+    assert.equal(actual.model, "gpt-5.6-terra");
+    assert.equal(actual.reasoningEffort, "high");
+    assert.equal(actual.contextModel, "gpt-5.6-terra");
+    assert.equal(actual.contextReasoningEffort, "medium");
+  });
+
+  it("maps legacy opus worker and context settings to Terra", () => {
+    const actual = defaults({ defaults: { model: "opus", contextModel: "opus" } });
+    assert.equal(actual.model, "gpt-5.6-terra");
+    assert.equal(actual.contextModel, "gpt-5.6-terra");
+  });
+
+  it("uses Terra for blank settings without overwriting explicit model choices", () => {
+    const actual = defaults({ defaults: { model: "  ", contextModel: " " } });
+    assert.equal(actual.model, "gpt-5.6-terra");
+    assert.equal(actual.contextModel, "gpt-5.6-terra");
+    const explicit = defaults({ defaults: {
+      model: "custom-worker", reasoningEffort: "low",
+      contextModel: "custom-context", contextReasoningEffort: "high",
+    } });
+    assert.equal(explicit.model, "custom-worker");
+    assert.equal(explicit.reasoningEffort, "low");
+    assert.equal(explicit.contextModel, "custom-context");
+    assert.equal(explicit.contextReasoningEffort, "high");
   });
 });
