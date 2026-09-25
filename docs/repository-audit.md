@@ -143,7 +143,9 @@ backup or permission to publish partial work. Successful PR runs still clean up
 their local worktree and keep the remote PR branch.
 Retained failures are removed from the configured ready queue before returning
 to Todo. If removal cannot be verified, leave the ticket In Progress so the next
-drain cannot select it. Requeue only after the retained worktree has been triaged.
+drain cannot select it. A custom `drain --label` is passed through to this gate;
+both the active and default queue labels are cleared if present. Requeue only
+after the retained worktree has been triaged.
 
 Runtime errors and timeouts stop for triage instead of opening a fresh agent turn
 that could reset a native approval interruption. Completed turns whose output

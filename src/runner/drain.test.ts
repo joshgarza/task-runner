@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runWithConcurrency } from "../concurrency.ts";
-import { formatSuccessfulRun, isLocalStaleIssue } from "./drain.ts";
+import { formatSuccessfulRun, isLocalStaleIssue, processDrainIssue } from "./drain.ts";
 
 describe("runWithConcurrency", () => {
   it("processes all items with concurrency=1 (sequential)", async () => {
@@ -130,6 +130,17 @@ describe("runWithConcurrency", () => {
 });
 
 describe("drain route reporting", () => {
+  it("passes the active custom queue label into the issue pipeline", async () => {
+    let invocations = 0;
+    const result = await processDrainIssue({ identifier: "JOS-294", title: "Fixture" }, "custom-ready", async (identifier, options) => {
+      invocations++;
+      assert.equal(identifier, "JOS-294");
+      assert.deepEqual(options, { queueLabel: "custom-ready" });
+      return { issueId: identifier, success: false, error: "fixture", durationMs: 0, attempts: 1 };
+    });
+    assert.equal(invocations, 1);
+    assert.equal(result.success, false);
+  });
   it("reports cloud delegation without claiming a PR was created", () => {
     assert.equal(
       formatSuccessfulRun({

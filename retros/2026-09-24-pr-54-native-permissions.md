@@ -19,3 +19,6 @@ the ready label and would be selected again, producing collisions instead of
 useful work. Queue removal is now verified before rollback; failures leave the
 ticket In Progress. Tests cover mutation errors, unpersisted changes, and failed
 verification so unknown queue state cannot become runnable.
+The active `drain --label` must also survive the handoff to the issue pipeline;
+default-only cleanup left custom queues runnable. Handoff and cleanup regressions
+now cover that override and tickets carrying both active and default labels.

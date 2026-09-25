@@ -219,7 +219,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
     // Process issues with concurrency pool
     log("INFO", null, `Processing ${runnableIssues.length} issue(s) with concurrency ${concurrency}`);
-    const processedResults = await runWithConcurrency(runnableIssues, concurrency, processIssue);
+    const processedResults = await runWithConcurrency(runnableIssues, concurrency, issue => processDrainIssue(issue, label));
     const results = [...quarantineResults, ...processedResults];
 
     logSummary(results, false);
@@ -229,11 +229,15 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
   }
 }
 
-async function processIssue(issue: LinearIssue): Promise<RunResult> {
+export async function processDrainIssue(
+  issue: Pick<LinearIssue, "identifier" | "title">,
+  queueLabel: string,
+  run: typeof runIssue = runIssue
+): Promise<RunResult> {
   log("INFO", null, `Processing ${issue.identifier}: ${issue.title}`);
 
   try {
-    const result = await runIssue(issue.identifier);
+    const result = await run(issue.identifier, { queueLabel });
 
     if (result.success) {
       log("OK", issue.identifier, formatSuccessfulRun(result));

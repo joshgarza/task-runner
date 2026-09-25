@@ -84,6 +84,8 @@ export interface ValidationResult {
 // --- Run ---
 
 export interface RunOptions {
+  /** Internal handoff from drain, including its --label override. */
+  queueLabel?: string;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   maxAttempts?: number;

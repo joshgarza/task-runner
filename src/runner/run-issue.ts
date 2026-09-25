@@ -84,7 +84,8 @@ export async function runIssue(
     return failure(identifier, `Invalid execution routing: ${err.message}`, startTime, 0);
   }
 
-  const drainFailurePolicy = getDrainFailurePolicy(config);
+  const queueLabel = options.queueLabel ?? config.linear.agentLabel;
+  const drainFailurePolicy = getDrainFailurePolicy(config, queueLabel);
   const drainFailureStatus = getDrainFailureStatus(issue, drainFailurePolicy);
 
   if (options.dryRun) {
@@ -133,7 +134,7 @@ export async function runIssue(
   if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.isLocal) {
     return failure(
       identifier,
-      `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${config.linear.agentLabel}" after human triage.`,
+      `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${queueLabel}" after human triage.`,
       startTime,
       0
     );
@@ -449,12 +450,15 @@ export async function runIssue(
       }
       try {
         const labels = await resolveTeamLabels(issue.teamKey);
-        if (!labels.has(config.linear.agentLabel)) {
-          throw new Error(`Queue label "${config.linear.agentLabel}" could not be resolved`);
+        if (!labels.has(queueLabel)) {
+          throw new Error(`Queue label "${queueLabel}" could not be resolved`);
         }
-        await applyLabelChanges(issue.id, labels, [], [config.linear.agentLabel], false);
+        // Clear both known entry points if the issue belongs to a custom drain
+        // queue and the configured default queue. Preserve unrelated labels.
+        const queueLabels = [...new Set([queueLabel, config.linear.agentLabel])];
+        await applyLabelChanges(issue.id, labels, [], queueLabels, false);
         const refreshed = await fetchIssue(identifier);
-        if (refreshed.labels.includes(config.linear.agentLabel)) {
+        if (queueLabels.some(label => refreshed.labels.includes(label))) {
           throw new Error("Queue label is still present after removal");
         }
         recoveryDequeued = true;

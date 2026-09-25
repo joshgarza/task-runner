@@ -203,21 +203,22 @@ describe("local publication and recovery boundary", () => {
     projectName: "fixture", projectId: "fixture", labels: ["agent-ready"],
     comments: [], url: "https://linear.app/example/issue/JOS-294", branchName: "unused",
   };
-  function setup(overrides: Partial<RunIssueDependencies> = {}) {
+  function setup(overrides: Partial<RunIssueDependencies> = {}, queueLabel = "agent-ready") {
     const calls: string[] = [];
     let dequeued = false;
+    const queueLabels = [...new Set([queueLabel, "agent-ready"])];
     const deps: RunIssueDependencies = {
       loadConfig: () => config,
       getProjectConfig: () => ({ repoPath: "/fixture", defaultBranch: "main", testCommand: "npm test", lintCommand: "npm run lint" }),
-      fetchIssue: async () => ({ ...issue, labels: dequeued ? [] : issue.labels }),
-      resolveTeamLabels: async () => new Map([["agent-ready", "ready-label-id"]]),
+      fetchIssue: async () => ({ ...issue, labels: dequeued ? [] : queueLabels }),
+      resolveTeamLabels: async () => new Map(queueLabels.map(label => [label, `${label}-id`])),
       applyLabelChanges: async (_id, _labels, additions, removals, dryRun) => {
         assert.deepEqual(additions, []);
-        assert.deepEqual(removals, ["agent-ready"]);
+        assert.deepEqual(removals, queueLabels);
         assert.equal(dryRun, false);
         dequeued = true;
         calls.push("dequeue");
-        return { labelsAdded: [], labelsRemoved: ["agent-ready"] };
+        return { labelsAdded: [], labelsRemoved: queueLabels };
       },
       fetchBlockingRelations: async () => [],
       transitionIssue: async () => { calls.push("transition"); },
@@ -352,6 +353,27 @@ describe("local publication and recovery boundary", () => {
       assert.ok(!calls.includes("push"));
     });
   }
+
+  it("removes and verifies both the active custom queue and default queue on retained failure", async () => {
+    const { calls, deps } = setup({ runLocalCodex: async () => ({
+      success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1,
+    }) }, "custom-ready");
+    const result = await runIssue("JOS-294", { queueLabel: "custom-ready" }, deps);
+    assert.equal(result.success, false);
+    assert.ok(calls.indexOf("dequeue") < calls.indexOf("rollback"));
+    assert.ok(calls.includes("rollback"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  it("does not roll back if only the default label was removed but the custom queue remains", async () => {
+    const { calls, deps } = setup({
+      fetchIssue: async () => ({ ...issue, labels: ["custom-ready"] }),
+      runLocalCodex: async () => ({ success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1 }),
+    }, "custom-ready");
+    assert.equal((await runIssue("JOS-294", { queueLabel: "custom-ready" }, deps)).success, false);
+    assert.ok(!calls.includes("rollback"));
+    assert.ok(!calls.includes("cleanup"));
+  });
 
   for (const labels of [["execution:ops"], ["needs-human-approval"], ["execution:unknown"], ["execution:local", "execution:cloud"]]) {
     it(`rejects gated routing before creating a worktree: ${labels.join(", ")}`, async () => {
