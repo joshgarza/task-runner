@@ -13,3 +13,9 @@ The durable lesson is encoded in those gates and tests: retry only outcomes that
 are explicitly safe to retry, and never infer permission or completion from an
 exit code alone. `run-issue.ts` remains a recurring orchestration hotspot noted
 in prior retros; this change adds boundary coverage without a broader refactor.
+
+A rereview caught the related scheduling boundary: retained failures still had
+the ready label and would be selected again, producing collisions instead of
+useful work. Queue removal is now verified before rollback; failures leave the
+ticket In Progress. Tests cover mutation errors, unpersisted changes, and failed
+verification so unknown queue state cannot become runnable.

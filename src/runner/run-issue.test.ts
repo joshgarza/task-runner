@@ -205,10 +205,20 @@ describe("local publication and recovery boundary", () => {
   };
   function setup(overrides: Partial<RunIssueDependencies> = {}) {
     const calls: string[] = [];
+    let dequeued = false;
     const deps: RunIssueDependencies = {
       loadConfig: () => config,
       getProjectConfig: () => ({ repoPath: "/fixture", defaultBranch: "main", testCommand: "npm test", lintCommand: "npm run lint" }),
-      fetchIssue: async () => issue,
+      fetchIssue: async () => ({ ...issue, labels: dequeued ? [] : issue.labels }),
+      resolveTeamLabels: async () => new Map([["agent-ready", "ready-label-id"]]),
+      applyLabelChanges: async (_id, _labels, additions, removals, dryRun) => {
+        assert.deepEqual(additions, []);
+        assert.deepEqual(removals, ["agent-ready"]);
+        assert.equal(dryRun, false);
+        dequeued = true;
+        calls.push("dequeue");
+        return { labelsAdded: [], labelsRemoved: ["agent-ready"] };
+      },
       fetchBlockingRelations: async () => [],
       transitionIssue: async () => { calls.push("transition"); },
       addComment: async (_id, body) => { calls.push(body); },
@@ -264,6 +274,7 @@ describe("local publication and recovery boundary", () => {
       }
       assert.ok(calls.some(x => x.startsWith("Retained worktree: /fixture/.task-runner-worktrees/JOS-294")));
       assert.ok(calls.includes("rollback"));
+      assert.ok(calls.indexOf("dequeue") < calls.indexOf("rollback"));
       assert.ok(!calls.includes("cleanup"));
       assert.ok(!calls.includes("review"));
       if (["runtime", "validation", "exception"].includes(failure)) assert.ok(!calls.includes("push"));
@@ -323,6 +334,24 @@ describe("local publication and recovery boundary", () => {
     assert.ok(!calls.includes("push"));
     assert.ok(!calls.includes("cleanup"));
   });
+
+  for (const mode of ["error", "not-persisted", "verification-error"]) {
+    it(`leaves retained failures In Progress when queue removal is ${mode}`, async () => {
+      const { calls, deps } = setup({ runLocalCodex: async () => ({
+        success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1,
+      }) });
+      if (mode === "error") deps.applyLabelChanges = async () => { throw new Error("Linear unavailable"); };
+      if (mode === "not-persisted") deps.fetchIssue = async () => issue;
+      if (mode === "verification-error") {
+        let fetches = 0;
+        deps.fetchIssue = async () => { if (++fetches > 1) throw new Error("Read failed"); return issue; };
+      }
+      assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
+      assert.ok(!calls.includes("rollback"));
+      assert.ok(!calls.includes("cleanup"));
+      assert.ok(!calls.includes("push"));
+    });
+  }
 
   for (const labels of [["execution:ops"], ["needs-human-approval"], ["execution:unknown"], ["execution:local", "execution:cloud"]]) {
     it(`rejects gated routing before creating a worktree: ${labels.join(", ")}`, async () => {

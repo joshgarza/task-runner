@@ -4,6 +4,7 @@ import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, addComment, updateIssue } from "../linear/mutations.ts";
+import { resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
@@ -37,7 +38,7 @@ const defaultRunIssueDependencies = {
   transitionIssue, addComment, createWorktree, removeWorktree,
   hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
   requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
-  delegateCloudIssue, quarantineDrainFailure, logToFile,
+  delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
 };
 
 export type RunIssueDependencies = typeof defaultRunIssueDependencies;
@@ -52,7 +53,7 @@ export async function runIssue(
     transitionIssue, addComment, createWorktree, removeWorktree,
     hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
     requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
-    delegateCloudIssue, quarantineDrainFailure, logToFile,
+    delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
   } = deps;
   const startTime = Date.now();
   const config = loadConfig();
@@ -429,6 +430,7 @@ export async function runIssue(
       attempts,
     };
   } finally {
+    let recoveryDequeued = false;
     // Keep failed output in place without reading/copying potentially sensitive
     // files. createWorktree refuses to overwrite it on a subsequent run.
     if (pipelineSucceeded) {
@@ -445,10 +447,26 @@ export async function runIssue(
       } catch (err: any) {
         log("WARN", identifier, `Failed to record retained worktree in Linear: ${err.message}`);
       }
+      try {
+        const labels = await resolveTeamLabels(issue.teamKey);
+        if (!labels.has(config.linear.agentLabel)) {
+          throw new Error(`Queue label "${config.linear.agentLabel}" could not be resolved`);
+        }
+        await applyLabelChanges(issue.id, labels, [], [config.linear.agentLabel], false);
+        const refreshed = await fetchIssue(identifier);
+        if (refreshed.labels.includes(config.linear.agentLabel)) {
+          throw new Error("Queue label is still present after removal");
+        }
+        recoveryDequeued = true;
+      } catch (err: any) {
+        // Do not make this ticket drain-eligible when queue removal failed or
+        // its outcome is unknown. Leave In Progress and retain its worktree.
+        log("ERROR", identifier, `Retained output requires triage; leaving In Progress because queue removal failed: ${err.message}`);
+      }
     }
 
     // 15. Roll back to Todo if pipeline failed after transitioning to In Progress
-    if (!pipelineSucceeded && transitionedToInProgress) {
+    if (!pipelineSucceeded && transitionedToInProgress && recoveryDequeued) {
       await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed", attempts);
     }
   }
