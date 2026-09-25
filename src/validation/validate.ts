@@ -21,6 +21,7 @@ export function validateAgentOutput(
   const errors: string[] = [];
   const warnings: string[] = [];
   let validatedHead: string | undefined;
+  let retryable = true;
 
   // Tests must exercise committed output, not an uncommitted fix that will be
   // absent from the PR. Refuse to discard unfinished output during cleanup.
@@ -31,7 +32,10 @@ export function validateAgentOutput(
       });
       if (status) errors.push("Uncommitted changes remain. Commit the completed task before publishing.");
       const head = execGit(["rev-parse", "HEAD"], { cwd: worktreePath, timeout: 10_000 });
-      if (validatedHead && head !== validatedHead) errors.push("HEAD changed during validation.");
+      if (validatedHead && head !== validatedHead) {
+        errors.push("HEAD changed during validation. Preserve and triage before retrying.");
+        retryable = false;
+      }
       validatedHead ??= head;
     } catch (err: any) {
       errors.push(`Failed to verify committed output: ${err.message?.slice(0, 200)}`);
@@ -106,6 +110,7 @@ export function validateAgentOutput(
 
   return {
     valid: errors.length === 0,
+    retryable,
     errors,
     warnings,
   };

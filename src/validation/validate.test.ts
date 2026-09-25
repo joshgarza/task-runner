@@ -50,6 +50,7 @@ for (const kind of ["tracked", "untracked", "test-output", "test-commit", "faile
     if (kind === "failed-test") f.config.testCommand = "node -e 'process.exit(1)'";
     const result = validateAgentOutput(f.cwd, "main", f.config, "fixture");
     assert.equal(result.valid, false);
+    assert.equal(result.retryable, kind !== "test-commit");
     assert.match(result.errors.join("\n"), kind === "test-commit" ? /HEAD changed/ : kind === "failed-test" ? /Tests failed/ : /Uncommitted changes/);
   });
 }

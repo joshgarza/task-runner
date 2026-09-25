@@ -145,6 +145,11 @@ their local worktree and keep the remote PR branch.
 Runtime errors and timeouts stop for triage instead of opening a fresh agent turn
 that could reset a native approval interruption. Completed turns whose output
 fails validation still use the configured retry limit.
+Workers return a schema-constrained completion report. A blocked report, including
+a normally exited turn that reports a permission denial, or an invalid report
+stops before validation and cannot be retried automatically. Validation-time HEAD
+changes are also terminal, so a later attempt cannot accept a commit created by
+a test, lint, or build command as the new baseline.
 
 The SDK/CLI 0.154.0 configuration was exercised in a disposable worktree using
 Terra/high on 2026-09-24: a sandbox-blocked child-process test passed after native

@@ -75,6 +75,8 @@ export interface LinearIssue {
 
 export interface ValidationResult {
   valid: boolean;
+  /** False when retrying could accept a validation-created commit. */
+  retryable?: boolean;
   errors: string[];
   warnings: string[];
 }

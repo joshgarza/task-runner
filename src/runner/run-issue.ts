@@ -10,7 +10,7 @@ import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
 import { getGitHubRepository } from "../git/remote.ts";
 import * as comments from "../linear/comments.ts";
 import { runLocalCodex } from "../agents/spawn.ts";
-import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
+import { buildWorkerPrompt, parseWorkerReport, workerReportSchema } from "../agents/worker-prompt.ts";
 import { requestCodexReview } from "./review.ts";
 import {
   getDrainFailurePolicy,
@@ -258,6 +258,7 @@ export async function runIssue(
         profile: "write",
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
+        outputSchema: workerReportSchema,
       });
 
       // Save agent log
@@ -288,6 +289,19 @@ export async function runIssue(
         return failure(identifier, lastError, startTime, attempts);
       }
 
+      // A normal CLI exit does not prove task completion. In particular, a
+      // denied worker can stop and report its blocker in a successful turn.
+      try {
+        const report = parseWorkerReport(agentResult.output);
+        if (report.outcome === "blocked") {
+          lastError = `Worker blocked: ${report.summary}`;
+          return failure(identifier, lastError, startTime, attempts);
+        }
+      } catch (err: any) {
+        lastError = `Invalid worker completion report: ${err.message}`;
+        return failure(identifier, lastError, startTime, attempts);
+      }
+
       // 7. Validate output
       const validation = validateAgentOutput(
         worktreePath,
@@ -306,6 +320,9 @@ export async function runIssue(
       } else {
         lastError = validation.errors.join("\n");
         log("ERROR", identifier, `Validation failed: ${lastError}`);
+        if (validation.retryable === false) {
+          return failure(identifier, lastError, startTime, attempts);
+        }
         if (attempts >= maxAttempts) {
           await addComment(
             issue.id,

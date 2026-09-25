@@ -217,7 +217,13 @@ describe("local publication and recovery boundary", () => {
       hasCommits: () => true,
       pushBranch: () => { calls.push("push"); },
       createPR: () => { calls.push("pr"); return "https://github.com/example/repo/pull/1"; },
-      runLocalCodex: async () => ({ success: true, output: "Done", stderr: "", durationMs: 1, exitCode: 0 }),
+      runLocalCodex: async (options) => {
+        assert.deepEqual(options.outputSchema, {
+          type: "object", properties: { outcome: { type: "string", enum: ["completed", "blocked"] }, summary: { type: "string" } },
+          required: ["outcome", "summary"], additionalProperties: false,
+        });
+        return { success: true, output: JSON.stringify({ outcome: "completed", summary: "Implemented, tested and committed" }), stderr: "", durationMs: 1, exitCode: 0 };
+      },
       validateAgentOutput: () => { calls.push("validate"); return { valid: true, errors: [], warnings: [] }; },
       requestCodexReview: async () => { calls.push("review"); return { requested: true, attempts: 1 }; },
       postPRLink: async () => { calls.push("link"); },
@@ -279,11 +285,41 @@ describe("local publication and recovery boundary", () => {
   it("never publishes when the last attempt fails after an earlier validation failure", async () => {
     let attempts = 0;
     const { calls, deps } = setup({
-      runLocalCodex: async () => ({ success: ++attempts === 1, output: "", stderr: "interrupted", durationMs: 1, exitCode: attempts === 1 ? 0 : 1 }),
+      runLocalCodex: async () => ({ success: ++attempts === 1, output: JSON.stringify({ outcome: "completed", summary: "Task done" }), stderr: "interrupted", durationMs: 1, exitCode: attempts === 1 ? 0 : 1 }),
       validateAgentOutput: () => ({ valid: false, errors: ["Tests failed"], warnings: [] }),
     });
     assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
     assert.equal(attempts, 2);
+    assert.ok(!calls.includes("push"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  for (const output of [JSON.stringify({ outcome: "blocked", summary: "Native permission review denied the commit" }), "Not JSON", JSON.stringify({ outcome: "completed" })]) {
+    it(`stops on a blocked or invalid normal-exit report: ${output}`, async () => {
+      let attempts = 0;
+      const { calls, deps } = setup({ runLocalCodex: async () => {
+        attempts++;
+        return { success: true, output, stderr: "", durationMs: 1, exitCode: 0 };
+      } });
+      const result = await runIssue("JOS-294", {}, deps);
+      assert.equal(result.success, false);
+      assert.equal(attempts, 1);
+      assert.ok(!calls.includes("validate"));
+      assert.ok(!calls.includes("push"));
+      assert.ok(!calls.includes("cleanup"));
+    });
+  }
+
+  it("does not retry or publish when validation changed the worker HEAD", async () => {
+    let validations = 0;
+    const { calls, deps } = setup({ validateAgentOutput: () => {
+      validations++;
+      return { valid: false, retryable: false, errors: ["HEAD changed during validation"], warnings: [] };
+    } });
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, false);
+    assert.equal(result.attempts, 1);
+    assert.equal(validations, 1);
     assert.ok(!calls.includes("push"));
     assert.ok(!calls.includes("cleanup"));
   });
