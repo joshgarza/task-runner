@@ -20,6 +20,25 @@ export function validateAgentOutput(
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  let validatedHead: string | undefined;
+
+  // Tests must exercise committed output, not an uncommitted fix that will be
+  // absent from the PR. Refuse to discard unfinished output during cleanup.
+  function checkCommittedOutput(): void {
+    try {
+      const status = execGit(["status", "--porcelain", "--untracked-files=normal"], {
+        cwd: worktreePath, timeout: 10_000,
+      });
+      if (status) errors.push("Uncommitted changes remain. Commit the completed task before publishing.");
+      const head = execGit(["rev-parse", "HEAD"], { cwd: worktreePath, timeout: 10_000 });
+      if (validatedHead && head !== validatedHead) errors.push("HEAD changed during validation.");
+      validatedHead ??= head;
+    } catch (err: any) {
+      errors.push(`Failed to verify committed output: ${err.message?.slice(0, 200)}`);
+    }
+  }
+
+  checkCommittedOutput();
 
   // 1. Check for new commits
   try {
@@ -82,6 +101,8 @@ export function validateAgentOutput(
       errors.push(`Build failed: ${output}`);
     }
   }
+
+  checkCommittedOutput();
 
   return {
     valid: errors.length === 0,

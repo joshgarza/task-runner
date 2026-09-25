@@ -32,10 +32,28 @@ import type {
   TaskRunnerConfig,
 } from "../types.ts";
 
+const defaultRunIssueDependencies = {
+  loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
+  transitionIssue, addComment, createWorktree, removeWorktree,
+  hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
+  requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
+  delegateCloudIssue, quarantineDrainFailure, logToFile,
+};
+
+export type RunIssueDependencies = typeof defaultRunIssueDependencies;
+
 export async function runIssue(
   identifier: string,
-  options: RunOptions = {}
+  options: RunOptions = {},
+  deps: RunIssueDependencies = defaultRunIssueDependencies
 ): Promise<RunResult> {
+  const {
+    loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
+    transitionIssue, addComment, createWorktree, removeWorktree,
+    hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
+    requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
+    delegateCloudIssue, quarantineDrainFailure, logToFile,
+  } = deps;
   const startTime = Date.now();
   const config = loadConfig();
 
@@ -218,6 +236,7 @@ export async function runIssue(
   let attempts = 0;
   let lastError = "";
   let pipelineSucceeded = false;
+  let validated = false;
 
   try {
     // 7. Spawn worker agent (with retry loop)
@@ -264,7 +283,9 @@ export async function runIssue(
         lastError = `Agent exited with code ${agentResult.exitCode}. stderr: ${agentResult.stderr.slice(0, 1000)}`;
         log("ERROR", identifier, `Agent failed: ${lastError.slice(0, 200)}`);
 
-        continue;
+        // A failed native turn can include an approval interruption. Do not
+        // reset its permission-review context by starting a fresh agent turn.
+        return failure(identifier, lastError, startTime, attempts);
       }
 
       // 7. Validate output
@@ -276,6 +297,7 @@ export async function runIssue(
       );
 
       if (validation.valid) {
+        validated = true;
         if (validation.warnings.length > 0) {
           log("WARN", identifier, `Validation warnings: ${validation.warnings.join("; ")}`);
         }
@@ -292,6 +314,14 @@ export async function runIssue(
           return failure(identifier, `Validation failed after ${maxAttempts} attempts: ${lastError}`, startTime, attempts);
         }
       }
+    }
+
+    // Commits alone are not success: an errored/timed-out worker may have
+    // committed partial output without ever reaching validation.
+    if (!validated) {
+      attempts = Math.min(attempts, maxAttempts);
+      lastError ||= "No successfully validated worker output";
+      return failure(identifier, lastError, startTime, attempts);
     }
 
     // 8. Check we actually have commits to push
@@ -382,11 +412,22 @@ export async function runIssue(
       attempts,
     };
   } finally {
-    // 14. Clean up worktree (delete remote branch only on failure)
-    try {
-      removeWorktree(projectConfig.repoPath, identifier, !pipelineSucceeded, projectConfig.branchPrefix);
-    } catch (err: any) {
-      log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
+    // Keep failed output in place without reading/copying potentially sensitive
+    // files. createWorktree refuses to overwrite it on a subsequent run.
+    if (pipelineSucceeded) {
+      try {
+        removeWorktree(projectConfig.repoPath, identifier, false, projectConfig.branchPrefix);
+      } catch (err: any) {
+        log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
+      }
+    } else {
+      const recovery = `Retained worktree: ${worktreePath} (branch: ${branch}). Preserve and triage this output before retrying. No failure cleanup was performed.`;
+      log("WARN", identifier, recovery);
+      try {
+        await addComment(issue.id, recovery);
+      } catch (err: any) {
+        log("WARN", identifier, `Failed to record retained worktree in Linear: ${err.message}`);
+      }
     }
 
     // 15. Roll back to Todo if pipeline failed after transitioning to In Progress

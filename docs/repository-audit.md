@@ -118,6 +118,39 @@ the selected model works with the signed-in account and the real tests execute.
 See the official [Codex models](https://learn.chatgpt.com/docs/models) and
 [SDK documentation](https://learn.chatgpt.com/docs/codex-sdk) for compatibility.
 
+### Native execution-permission review
+
+JOS-294 routes eligible worker escalation requests through Codex's native
+automatic reviewer: `approval_policy = "on-request"` and
+`approvals_reviewer = "auto_review"`. The SDK passes these settings per
+invocation, without editing machine-local Codex configuration. Workers remain
+`workspace-write` with network access disabled; context gathering stays
+`read-only` with approval policy `never`. Authentication, model selection,
+routing gates, and commit ownership do not change.
+
+This reviewer handles execution permissions, including sandbox-blocked Git
+metadata and test commands. It is separate from `@codex review` on GitHub and
+does not grant blanket access. Do not override reviewer policy, work around a
+denial, or switch to Full Access when a request fails. See the official
+[Auto-review documentation](https://learn.chatgpt.com/docs/sandboxing/auto-review).
+
+Publication requires a successful worker turn and validation of clean committed
+output. Failed runs retain the worktree and local branch, log the recovery path,
+and attempt to record it in Linear before rollback. An existing worktree blocks
+new runs instead of being deleted. Triage and preserve its output before moving
+or removing it and requeueing the ticket. This is local recovery, not an automatic
+backup or permission to publish partial work. Successful PR runs still clean up
+their local worktree and keep the remote PR branch.
+
+Runtime errors and timeouts stop for triage instead of opening a fresh agent turn
+that could reset a native approval interruption. Completed turns whose output
+fails validation still use the configured retry limit.
+
+The SDK/CLI 0.154.0 configuration was exercised in a disposable worktree using
+Terra/high on 2026-09-24: a sandbox-blocked child-process test passed after native
+permission review and the worker created its own commit. The real scheduled
+JOS-291 ticket-to-PR-to-reviewed-merge run remains the deployment acceptance gate.
+
 Future visual design work is tracked in JOS-289. It will use Ladle first, with
 a tool-independent contract for previews, design states, evidence, and approval.
 The architecture proposal goes to Josh before building that integration.

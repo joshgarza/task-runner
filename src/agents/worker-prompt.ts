@@ -40,10 +40,12 @@ ${teamConfig.buildCommand ? `7. Run the build to verify compilation: \`${teamCon
 
 ## Rules
 
+- Eligible sandbox-boundary requests use Codex's native automatic permission reviewer. For a sandbox-blocked Git commit or test command, request narrowly scoped escalation, leaving the sandbox and reviewer policy unchanged.
+- Never work around a permission denial or probe secrets. If permission is denied or unavailable, stop and report the blocker; do not seek the same outcome through another command, process, or policy change.
 - Do NOT run git push — the runner handles that.
 - Do NOT modify CI/CD config, deployment files, or package manager lockfiles unless the ticket specifically asks for it.
 - Do NOT add dependencies unless the ticket requires it.
 - Keep changes minimal and focused on the ticket requirements.
 - If the ticket is ambiguous, implement the most reasonable interpretation.
-- If you cannot complete the task, commit what you have and explain what's blocking in a comment at the top of your output.`;
+- If you cannot complete the task, leave recoverable work in place and explain the blocker at the top of your output. Do not attempt a denied commit again.`;
 }
