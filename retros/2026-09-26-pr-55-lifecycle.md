@@ -20,7 +20,9 @@ The runtime cancellation test blocks the coordinator event loop while an
 independent worker monitor cancels validation. This guards against synchronous
 Git operations delaying a concurrent run's disk safety checks. Cleanup tests
 control process evidence explicitly; production unknown-process checks stay
-conservative and do not silently discard output to satisfy a test.
+conservative and do not silently discard output to satisfy a test. A nested Git
+checkout also overrides a disposable-directory allowance so an embedded manual
+checkout cannot be removed with its parent.
 
 No scope changes were deferred. The live CLI credential check remains a rollout
 prerequisite. JOS-291 resumes as already-approved existing work with its original

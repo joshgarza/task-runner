@@ -28,7 +28,10 @@ export function checkNames(path: string, entries: typeof readdirSync = readdirSy
   const blocked: string[] = [];
   const walk = (dir: string) => {
     for (const entry of entries(dir, { withFileTypes: true })) {
-      if (entry.name === '.git') continue;
+      if (entry.name === '.git') {
+        if (dir !== path) blocked.push('Nested Git checkout is protected');
+        continue;
+      }
       if (suspectedSecret(entry.name)) { blocked.push('Suspected secret path; contents not accessed'); continue; }
       if (entry.isDirectory()) walk(resolve(dir, entry.name));
     }

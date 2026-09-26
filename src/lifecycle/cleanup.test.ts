@@ -45,7 +45,7 @@ test('safe cleanup permits explicitly allowlisted dependencies, preserves recove
   assert.equal(f.git(f.repo, 'rev-parse', 'refs/task-runner/recovery/fixture'), f.head);
   assert.equal(f.git(f.repo, 'rev-parse', 'task-runner/jos-1'), f.head);
 });
-for (const kind of ['dirty', 'untracked', 'ignored', 'unpublished', 'locked', 'protected', 'stale-remote']) {
+for (const kind of ['dirty', 'untracked', 'ignored', 'unpublished', 'locked', 'protected', 'stale-remote', 'nested-checkout']) {
   test(`preserves ${kind} output and refuses physical-slot release`, t => {
     const f = fixture(t);
     if (kind === 'dirty') writeFileSync(join(f.path, 'README.md'), 'unfinished');
@@ -54,6 +54,7 @@ for (const kind of ['dirty', 'untracked', 'ignored', 'unpublished', 'locked', 'p
     if (kind === 'unpublished') f.git(f.path, 'commit', '--allow-empty', '-m', 'unpublished');
     if (kind === 'locked') f.git(f.repo, 'worktree', 'lock', f.path);
     if (kind === 'protected') f.registry.update(s => { s.checkouts.fixture.protected = true; });
+    if (kind === 'nested-checkout') { mkdirSync(join(f.path, 'node_modules')); f.git(f.path, 'init', join(f.path, 'node_modules', 'manual')); }
     if (kind === 'stale-remote') f.git(f.path, 'push', 'origin', 'main:task-runner/jos-1', '--force');
     const result = cleanupCheckout(f.registry, 'fixture', f.config, false, f.inspect);
     assert.equal(result.safe, false); assert.equal(existsSync(f.path), true); assert.equal(f.registry.read().checkouts.fixture.phase, 'present');

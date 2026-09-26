@@ -71,7 +71,8 @@ for suspected secrets before Git content checks; suspected secrets stop cleanup
 without opening them. Dirty and untracked output or unknown ignored files stop
 cleanup. Only project `disposableFolders` are allowed as ignored output; the
 initial TaskRunner default is `node_modules`. Secrets override that allowance,
-including secret-looking dependency paths. Nothing is automatically committed,
+including secret-looking dependency paths. Nested Git checkouts stay protected
+even inside an allowlisted directory. Nothing is automatically committed,
 checkpointed or copied. Local HEAD, branch, remote repository and current PR
 revision must agree. Open or closed unmerged PRs also need the exact remote
 branch revision. Matching merged PR evidence preserves the published revision.
