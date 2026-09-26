@@ -8,7 +8,7 @@ import { alive, identity, checkoutActivity } from './processes.ts';
 import { sampleDisks, applyDiskSamples } from './disk.ts';
 import { cleanupCheckout, prEvidence, worktrees } from './cleanup.ts';
 import { assess } from './assessment.ts';
-import { getWorktreePath, getBranchName } from '../git/worktree.ts';
+import { getWorktreePath, getBranchName, resolveGitDir } from '../git/worktree.ts';
 import { execGit, execGh } from '../git/exec.ts';
 import { getGitHubRepository } from '../git/remote.ts';
 import { addComment, transitionIssue } from '../linear/mutations.ts';
@@ -81,18 +81,31 @@ export function reserve(state: State, config: TaskRunnerConfig, issue: LinearIss
   evaluate(state, config.lifecycle, now);
   return { lease: { id: checkout.id, token: checkout.token, path: checkout.path, reuse, reuseBranch } };
 }
-export async function acquire(config: TaskRunnerConfig, issue: LinearIssue, queueLabel: string): Promise<Admission> {
+export async function acquire(config: TaskRunnerConfig, issue: LinearIssue, queueLabel: string, notifyDeferred = addComment): Promise<Admission> {
   try {
     await checkLifecycle(config);
     const registry = registryFor(config);
     const samples = await sampleDisks(config);
-    const admission = registry.update(state => { applyDiskSamples(state, samples, config.lifecycle); reconcile(state, config); return reserve(state, config, issue, queueLabel); });
+    const admission = registry.update(state => {
+      applyDiskSamples(state, samples, config.lifecycle); reconcile(state, config);
+      const project = config.projects[issue.projectName!];
+      const branch = getBranchName(issue.identifier, project.branchPrefix);
+      const branchExists = execGit(['branch', '--list', branch], { cwd: resolveGitDir(project.repoPath) });
+      if (branchExists && !Object.values(state.checkouts).some(c => c.ticket === issue.identifier && c.project === issue.projectName && c.branch === branch)) {
+        return { hold: { kind: 'lifecycle', reason: 'An unregistered branch requires explicit ownership adoption' } } as Admission;
+      }
+      return reserve(state, config, issue, queueLabel);
+    });
+    if (admission.lease && registry.read().triggerActive) {
+      try { await checkLifecycle(config); }
+      catch (e: any) { log("WARN", issue.identifier, `Post-reservation assessment failed: ${e.message}`); }
+    }
     if (admission.hold) {
       const notice = `admission:${issue.identifier}`;
       const reason = `${admission.hold.kind}: ${admission.hold.reason}`;
       if (registry.read().notices[notice] !== reason) {
         try {
-          await addComment(issue.id, `TaskRunner deferred (${reason}). Queue labels and execution attempts are unchanged. Use lifecycle status/check; Josh alone can extend deadlines or authorize dispositions.`);
+          await notifyDeferred(issue.id, `TaskRunner deferred (${reason}). Queue labels and execution attempts are unchanged. Use lifecycle status/check; Josh alone can extend deadlines or authorize dispositions.`);
           registry.update(state => { state.notices[notice] = reason; });
         } catch (e: any) { log('WARN', issue.identifier, `Deferred-hold reporting failed: ${e.message}`); }
       }
@@ -162,6 +175,7 @@ export function monitor(config: TaskRunnerConfig, sample = sampleDisks) {
 }
 
 async function reportHolds(registry: Registry, state: State): Promise<void> {
+  if (!state.holds.length) return;
   const text = state.holds.map(h => h.reason).join('\n') + (state.assessment ? `\nAssessment: ${JSON.stringify(state.assessment.report ?? state.assessment.error ?? state.assessment.status)}` : '');
   if (!text) return;
   const key = createHash('sha256').update(text).digest('hex');
@@ -207,10 +221,11 @@ export async function checkLifecycle(config: TaskRunnerConfig, options: { dryRun
     await diskMonitor.check();
     await assess(registry, config, { retry: options.retryAssessment, signal: diskMonitor.signal });
     const state = registry.read();
-    if (!state.disk.held && !diskMonitor.signal.aborted && state.assessment?.status === 'complete') {
+    if (state.triggerActive && !state.disk.held && !diskMonitor.signal.aborted && state.assessment?.status === 'complete') {
       for (const id of state.assessment.report?.cleanupCandidates ?? []) {
+        if (!Object.hasOwn(state.checkouts, id) || state.checkouts[id].phase === "removed") continue;
         const result = cleanupCheckout(registry, id, config);
-        if (!result.safe) registry.update(current => { if (current.checkouts[id]) current.checkouts[id].error = result.reasons.join('; '); });
+        if (!result.safe) registry.update(current => { if (Object.hasOwn(current.checkouts, id)) current.checkouts[id].error = result.reasons.join('; '); });
       }
     }
   } finally { await diskMonitor.stop(); }

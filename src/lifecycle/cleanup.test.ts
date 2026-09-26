@@ -104,3 +104,13 @@ test('revision changes during cleanup and failed or incomplete removal never rel
     assert.equal(failed.safe, false); assert.equal(f.registry.read().checkouts.fixture.phase, 'present');
   }
 });
+
+test('an unregistered existing branch defers before reserving or overwriting historical output', async t => {
+  const f = fixture(t);
+  f.registry.update(s => { s.tickets = {}; s.checkouts = {}; });
+  const { acquire } = await import('./service.ts');
+  const result = await acquire(f.config, { identifier: 'JOS-1', id: 'one', teamKey: 'JOS', projectName: 'task-runner', comments: [] } as any, 'custom', async () => {});
+  assert.equal(result.hold?.kind, 'lifecycle'); assert.match(result.hold?.reason ?? '', /unregistered branch/);
+  assert.equal(Object.keys(f.registry.read().tickets).length, 0);
+  assert.equal(existsSync(f.path), true); assert.equal(f.git(f.path, 'rev-parse', 'HEAD'), f.head);
+});

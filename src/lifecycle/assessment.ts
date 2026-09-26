@@ -58,7 +58,7 @@ export async function assess(registry: Registry, config: TaskRunnerConfig, optio
     });
     if (!result.success) throw new Error(`Native assessment failed: ${result.stderr.slice(0, 500)}`);
     const report = parseAssessment(result.output);
-    if (report.cleanupCandidates.some(id => !state.checkouts[id])) throw new Error('Assessment named an unregistered checkout');
+    if (report.cleanupCandidates.some(id => !Object.hasOwn(state.checkouts, id))) throw new Error('Assessment named an unregistered checkout');
     registry.update(current => { if (current.assessment?.key === key) current.assessment = { key, at: Date.now(), status: 'complete', report }; });
   } catch (e: any) {
     registry.update(current => { if (current.assessment?.key === key) current.assessment = { key, at: Date.now(), status: 'failed', error: e.message }; });

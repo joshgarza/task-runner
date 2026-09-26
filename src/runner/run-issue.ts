@@ -107,7 +107,7 @@ export async function runIssue(
   }
 
   // Existing registered work can continue toward completion during capacity/age holds.
-  const registered = executionRoute === "local" ? deps.lifecycle.registryFor(config).read().tickets[identifier] : undefined;
+  let registered = executionRoute === "local" ? deps.lifecycle.registryFor(config).read().tickets[identifier] : undefined;
   const validStates = [config.linear.todoState, "Backlog", ...(registered ? [config.linear.inProgressState, config.linear.inReviewState] : [])];
   if (!validStates.includes(issue.stateName)) {
     return failure(
@@ -208,6 +208,7 @@ export async function runIssue(
   let leaseReleased = false;
   let diskPaused = false;
   try {
+  registered = deps.lifecycle.registryFor(config).read().tickets[identifier];
   await diskMonitor.check();
   if (diskMonitor.signal.aborted) return deferredDisk();
 
@@ -460,8 +461,10 @@ export async function runIssue(
       attempts,
     };
   } finally {
-    deps.lifecycle.releaseLease(config, lease);
-    leaseReleased = true;
+    if (pipelineSucceeded) {
+      deps.lifecycle.releaseLease(config, lease);
+      leaseReleased = true;
+    }
     let recoveryDequeued = false;
     // Keep failed output in place without reading/copying potentially sensitive
     // files. createWorktree refuses to overwrite it on a subsequent run.

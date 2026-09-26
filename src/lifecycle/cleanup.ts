@@ -83,7 +83,7 @@ export function cleanupCheckout(registry: Registry, id: string, config: TaskRunn
   inspect: typeof inspectCheckout = inspectCheckout,
   remove = (checkout: Checkout) => execGit(['worktree', 'remove', '--force', '--', checkout.path], { cwd: resolveGitDir(checkout.repoPath), timeout: 15000 })): CleanupEvidence {
   const initial = registry.read();
-  const checkout = initial.checkouts[id];
+  const checkout = Object.hasOwn(initial.checkouts, id) ? initial.checkouts[id] : undefined;
   if (!checkout) return { safe: false, reasons: ['Checkout is not registered as runner-owned'] };
   const first = inspect(checkout, initial.tickets[checkout.ticket], config);
   if (!first.safe || dryRun) return first;

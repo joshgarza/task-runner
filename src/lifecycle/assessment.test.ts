@@ -36,10 +36,10 @@ test('assessment uses native read-only profile and permanent control checkout, d
   await assess(registry, config, {}, run); assert.equal(calls, 2);
   assert.deepEqual(registry.read().assessment?.report, report);
 });
-for (const kind of ['malformed', 'dependency-unavailable', 'unregistered-candidate']) {
+for (const kind of ['malformed', 'dependency-unavailable', 'unregistered-candidate', 'prototype-key']) {
   test(`${kind} assessment preserves the hold and does not repeat on unchanged polling`, async t => {
     const { registry, config } = fixture(t); let calls = 0;
-    const run: any = async () => { calls++; return kind === 'dependency-unavailable' ? { success: false, stderr: 'Codex unavailable' } : { success: true, output: kind === 'malformed' ? '{}' : JSON.stringify({ ...report, cleanupCandidates: ['not-owned'] }) }; };
+    const run: any = async () => { calls++; return kind === 'dependency-unavailable' ? { success: false, stderr: 'Codex unavailable' } : { success: true, output: kind === 'malformed' ? '{}' : JSON.stringify({ ...report, cleanupCandidates: [kind === 'prototype-key' ? '__proto__' : 'not-owned'] }) }; };
     await assess(registry, config, {}, run); await assess(registry, config, {}, run);
     assert.equal(calls, 1); assert.equal(registry.read().assessment?.status, 'failed'); assert.ok(registry.read().holds.length);
     await assess(registry, config, { retry: true }, run); assert.equal(calls, 2);
