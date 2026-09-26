@@ -1,3 +1,4 @@
+import { checkLifecycle, registryFor } from "../lifecycle/service.ts";
 // Drain all "agent-ready" issues with configurable concurrency
 
 import { loadConfig } from "../config.ts";
@@ -14,9 +15,13 @@ import {
   reconcileDrainFailureMarker,
 } from "./drain-failures.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
+import type { Ticket } from "../lifecycle/model.ts";
 
-export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
+const drainLifecycleDependencies = { loadConfig, checkLifecycle, acquireLock, releaseLock };
+export async function drain(options: DrainOptions = {}, lifecycleDeps = drainLifecycleDependencies): Promise<RunResult[]> {
+  const { loadConfig, checkLifecycle, acquireLock, releaseLock } = lifecycleDeps;
   const config = loadConfig();
+  await checkLifecycle(config, { dryRun: options.dryRun });
 
   const label = options.label ?? config.linear.agentLabel;
   const limit = options.limit ?? 50;
@@ -51,7 +56,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     // Reconcile every quarantined project independently of the execution
     // limit, so a full queue in one project cannot starve another project's
     // missing acknowledgement markers.
-    const fetchStates = [config.linear.todoState, "Backlog"];
+    const fetchStates = [config.linear.todoState, "Backlog", config.linear.inProgressState];
     for (const projectName of projectNames) {
       let quarantinedIssues: LinearIssue[] = [];
       try {
@@ -125,7 +130,11 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
       log("INFO", null, `Found ${issues.length} issue(s) for "${projectName}"`);
 
+      const lifecycleState = registryFor(config).read();
       for (const issue of issues) {
+        // Only disk-paused In Progress work resumes automatically. Review waiting
+        // and retained execution failures require an explicit continuation request.
+        if (issue.stateName === config.linear.inProgressState && !lifecycleState.tickets[issue.identifier]?.pausedForDisk) continue;
         if (allIssues.length >= limit) break;
         allIssues.push(issue);
       }
@@ -191,30 +200,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
     // Prioritize: sort by forward block count (most-blocking first)
     if (runnableIssues.length > 1) {
-      try {
-        log("INFO", null, "Fetching dependency counts for prioritization...");
-        const blockCounts = await Promise.all(
-          runnableIssues.map((issue) => fetchForwardBlockCount(issue.id))
-        );
-
-        // Build indexed pairs and stable-sort descending by block count
-        const indexed = runnableIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
-        indexed.sort((a, b) => b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
-
-        // Replace runnableIssues in-place with sorted order
-        for (let i = 0; i < indexed.length; i++) {
-          runnableIssues[i] = indexed[i].issue;
-        }
-
-        // Log prioritized order
-        for (let i = 0; i < indexed.length; i++) {
-          const entry = indexed[i];
-          const suffix = entry.blockCount > 0 ? ` (blocks ${entry.blockCount} issue(s))` : "";
-          log("INFO", entry.issue.identifier, `Priority #${i + 1}: ${entry.issue.title}${suffix}`);
-        }
-      } catch (err: any) {
-        log("WARN", null, `Failed to fetch dependency counts, proceeding with original order: ${err.message}`);
-      }
+      await prioritizeIssues(runnableIssues, registryFor(config).read().tickets);
     }
 
     // Process issues with concurrency pool
@@ -226,6 +212,30 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     return results;
   } finally {
     releaseLock();
+    await checkLifecycle(config, { dryRun: options.dryRun });
+  }
+}
+
+export async function prioritizeIssues(
+  issues: LinearIssue[],
+  tickets: Record<string, Pick<Ticket, "priority">>,
+  fetchCount = fetchForwardBlockCount
+): Promise<void> {
+  let blockCounts = issues.map(() => 0);
+  try {
+    log("INFO", null, "Fetching dependency counts for prioritization...");
+    blockCounts = await Promise.all(issues.map(issue => fetchCount(issue.id)));
+  } catch (err: any) {
+    log("WARN", null, `Dependency counts unavailable; preserving lifecycle priorities and stable order within each priority: ${err.message}`);
+  }
+  const priority = (identifier: string) => tickets[identifier]?.priority || 5;
+  const indexed = issues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
+  indexed.sort((a, b) => priority(a.issue.identifier) - priority(b.issue.identifier) || b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
+  for (let i = 0; i < indexed.length; i++) {
+    const entry = indexed[i];
+    issues[i] = entry.issue;
+    const suffix = entry.blockCount > 0 ? ` (blocks ${entry.blockCount} issue(s))` : "";
+    log("INFO", entry.issue.identifier, `Priority #${i + 1}: ${entry.issue.title}${suffix}`);
   }
 }
 
@@ -239,7 +249,9 @@ export async function processDrainIssue(
   try {
     const result = await run(issue.identifier, { queueLabel });
 
-    if (result.success) {
+    if (result.deferred) {
+      log("WARN", issue.identifier, `Deferred (${result.deferred}): ${result.error}`);
+    } else if (result.success) {
       log("OK", issue.identifier, formatSuccessfulRun(result));
     } else {
       log("ERROR", issue.identifier, `Pipeline failed: ${result.error}`);
@@ -275,7 +287,8 @@ export function formatSuccessfulRun(result: RunResult): string {
 
 function logSummary(results: RunResult[], dryRun: boolean): void {
   const succeeded = results.filter((r) => r.success).length;
-  const failed = results.filter((r) => !r.success).length;
+  const failed = results.filter((r) => !r.success && !r.deferred).length;
+  const deferred = results.filter(r => r.deferred).length;
   const suffix = dryRun ? " (dry run)" : "";
-  log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
+  log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${deferred} deferred, ${results.length} total`);
 }

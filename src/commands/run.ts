@@ -24,7 +24,9 @@ export function registerRunCommand(program: Command): void {
           dryRun: opts.dryRun,
         });
 
-        if (result.success) {
+        if (result.deferred) {
+          log("WARN", identifier, `Deferred (${result.deferred}): ${result.error}`);
+        } else if (result.success) {
           log("OK", identifier, "Pipeline complete");
           if (result.prUrl) console.log(`\nPR: ${result.prUrl}`);
           if (result.reviewRequested !== undefined) {
