@@ -28,6 +28,13 @@ export function reconcile(state: State, config: TaskRunnerConfig, activity = che
       if (!owned) inventory.push({ project, path: entry.path, branch: entry.branch, protection: 'Unregistered: manual/permanent/ambiguous; explicit adoption required' });
     }
     for (const checkout of Object.values(state.checkouts).filter(c => c.project === project && c.phase !== 'removed')) {
+      if (checkout.cleanup) {
+        const living = alive(checkout.cleanup.owner);
+        if (living === true) continue;
+        const blockers = living === 'unknown' ? ['Cleanup owner cannot be verified'] : activity(checkout.path);
+        if (blockers.length) { checkout.activityUnknown = true; checkout.error = blockers.join('; '); continue; }
+        checkout.cleanup = undefined; checkout.activityUnknown = false;
+      }
       const entry = entries.find(w => w.path === checkout.path);
       if (entry) checkout.revision = entry.head;
       if (checkout.owner) {
@@ -62,7 +69,7 @@ export function reserve(state: State, config: TaskRunnerConfig, issue: LinearIss
   const project = config.projects[issue.projectName!];
   if (!project) throw new Error('Project is not configured');
   let checkout = Object.values(state.checkouts).find(c => c.ticket === issue.identifier && c.phase !== 'removed');
-  if (checkout && (checkout.owner || checkout.protected || checkout.activityUnknown)) return { hold: { kind: 'lifecycle', reason: 'Ticket checkout is active or protected' } };
+  if (checkout && (checkout.owner || checkout.cleanup || checkout.protected || checkout.activityUnknown)) return { hold: { kind: 'lifecycle', reason: 'Ticket checkout is active or protected' } };
   if (!checkout && Object.values(state.checkouts).filter(c => c.phase !== 'removed').length >= config.lifecycle.maxWorktrees) return { hold: { kind: 'capacity', reason: 'An additional checkout requires a physical slot' } };
   const path = getWorktreePath(project.repoPath, issue.identifier);
   if (!checkout && existsSync(path)) return { hold: { kind: 'lifecycle', reason: 'Unregistered output at the requested path requires explicit adoption' } };

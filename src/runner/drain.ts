@@ -15,6 +15,7 @@ import {
   reconcileDrainFailureMarker,
 } from "./drain-failures.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
+import type { Ticket } from "../lifecycle/model.ts";
 
 const drainLifecycleDependencies = { loadConfig, checkLifecycle, acquireLock, releaseLock };
 export async function drain(options: DrainOptions = {}, lifecycleDeps = drainLifecycleDependencies): Promise<RunResult[]> {
@@ -199,32 +200,7 @@ export async function drain(options: DrainOptions = {}, lifecycleDeps = drainLif
 
     // Prioritize: sort by forward block count (most-blocking first)
     if (runnableIssues.length > 1) {
-      try {
-        log("INFO", null, "Fetching dependency counts for prioritization...");
-        const blockCounts = await Promise.all(
-          runnableIssues.map((issue) => fetchForwardBlockCount(issue.id))
-        );
-
-        // Build indexed pairs and stable-sort descending by block count
-        const indexed = runnableIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
-        const lifecycle = registryFor(config).read();
-        const priority = (identifier: string) => lifecycle.tickets[identifier]?.priority || 5;
-        indexed.sort((a, b) => priority(a.issue.identifier) - priority(b.issue.identifier) || b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
-
-        // Replace runnableIssues in-place with sorted order
-        for (let i = 0; i < indexed.length; i++) {
-          runnableIssues[i] = indexed[i].issue;
-        }
-
-        // Log prioritized order
-        for (let i = 0; i < indexed.length; i++) {
-          const entry = indexed[i];
-          const suffix = entry.blockCount > 0 ? ` (blocks ${entry.blockCount} issue(s))` : "";
-          log("INFO", entry.issue.identifier, `Priority #${i + 1}: ${entry.issue.title}${suffix}`);
-        }
-      } catch (err: any) {
-        log("WARN", null, `Failed to fetch dependency counts, proceeding with original order: ${err.message}`);
-      }
+      await prioritizeIssues(runnableIssues, registryFor(config).read().tickets);
     }
 
     // Process issues with concurrency pool
@@ -237,6 +213,29 @@ export async function drain(options: DrainOptions = {}, lifecycleDeps = drainLif
   } finally {
     releaseLock();
     await checkLifecycle(config, { dryRun: options.dryRun });
+  }
+}
+
+export async function prioritizeIssues(
+  issues: LinearIssue[],
+  tickets: Record<string, Pick<Ticket, "priority">>,
+  fetchCount = fetchForwardBlockCount
+): Promise<void> {
+  let blockCounts = issues.map(() => 0);
+  try {
+    log("INFO", null, "Fetching dependency counts for prioritization...");
+    blockCounts = await Promise.all(issues.map(issue => fetchCount(issue.id)));
+  } catch (err: any) {
+    log("WARN", null, `Dependency counts unavailable; preserving lifecycle priorities and stable order within each priority: ${err.message}`);
+  }
+  const priority = (identifier: string) => tickets[identifier]?.priority || 5;
+  const indexed = issues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
+  indexed.sort((a, b) => priority(a.issue.identifier) - priority(b.issue.identifier) || b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
+  for (let i = 0; i < indexed.length; i++) {
+    const entry = indexed[i];
+    issues[i] = entry.issue;
+    const suffix = entry.blockCount > 0 ? ` (blocks ${entry.blockCount} issue(s))` : "";
+    log("INFO", entry.issue.identifier, `Priority #${i + 1}: ${entry.issue.title}${suffix}`);
   }
 }
 

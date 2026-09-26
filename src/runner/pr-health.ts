@@ -8,6 +8,7 @@ import { fetchFilteredIssues } from "../linear/queries.ts";
 import { transitionIssue, addComment, setIssueLabels } from "../linear/mutations.ts";
 import { resolveTeamLabels, collectAllNodes } from "../linear/labels.ts";
 import { getLinearClient } from "../linear/client.ts";
+import { resolveExecutionRoute } from "../execution-route.ts";
 import type { LinearIssue } from "../types.ts";
 
 export interface PrHealthOptions {
@@ -140,7 +141,11 @@ async function removeAgentLabel(
  * Poll Linear issues in In Review / In Progress, check their linked PRs,
  * and reconcile state accordingly.
  */
-export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult[]> {
+const prHealthDependencies = { loadConfig, checkLifecycle, registryFor, fetchFilteredIssues, resolveTeamLabels,
+  getPrSnapshot, hasCommentWithPrefix, removeAgentLabel, transitionIssue, addComment };
+export async function prHealth(options: PrHealthOptions, dependencies: Partial<typeof prHealthDependencies> = {}): Promise<PrHealthResult[]> {
+  const { loadConfig, checkLifecycle, registryFor, fetchFilteredIssues, resolveTeamLabels,
+    getPrSnapshot, hasCommentWithPrefix, removeAgentLabel, transitionIssue, addComment } = { ...prHealthDependencies, ...dependencies };
   const config = loadConfig();
   const dryRun = options.dryRun ?? false;
   await checkLifecycle(config, { dryRun });
@@ -171,8 +176,12 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
 
   for (const issue of issues) {
     const registered = registry.tickets[issue.identifier];
-    if (!registered?.pr) continue;
-    const prUrls = [registered.pr.url];
+    let cloud = false;
+    try { cloud = resolveExecutionRoute(issue.labels).route === "cloud"; } catch { /* Uncertain ownership stays excluded. */ }
+    // Cloud delegation predates and does not enter the local lifecycle registry.
+    // Retain its runner-written markers without adopting unregistered local work.
+    const prUrls = registered?.pr ? [registered.pr.url] : !registered && cloud
+      ? extractPrUrls(issue.comments, issue.description) : [];
 
     if (prUrls.length === 0) {
       log("INFO", issue.identifier, `${prefix}No PR URL found on issue, skipping`);
@@ -213,7 +222,7 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
     }
 
     if (prState === "MERGED") {
-      if (registered.resolution?.kind !== "merged") {
+      if (registered && registered.resolution?.kind !== "merged") {
         log("WARN", issue.identifier, "Merged PR has not passed lifecycle completion verification; preserving unfinished state");
         continue;
       }

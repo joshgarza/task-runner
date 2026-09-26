@@ -26,7 +26,7 @@ export function parseAssessment(text: string): AssessmentReport {
 export function assessmentKey(state: State): string {
   return createHash('sha256').update(JSON.stringify({ episode: state.episode,
     holds: state.holds.filter(h => h.kind !== 'disk'), tickets: state.tickets,
-    checkouts: Object.values(state.checkouts).map(({ owner, token, ...c }) => ({ ...c, active: !!owner })), inventory: state.inventory,
+    checkouts: Object.values(state.checkouts).map(({ owner, token, cleanup, ...c }) => ({ ...c, active: !!owner, cleaning: !!cleanup })), inventory: state.inventory,
   })).digest('hex');
 }
 export async function assess(registry: Registry, config: TaskRunnerConfig, options: { dryRun?: boolean; retry?: boolean; signal?: AbortSignal } = {}, run = runLocalCodex): Promise<void> {

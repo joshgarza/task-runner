@@ -14,6 +14,7 @@ export interface Ticket {
 export interface Checkout {
   id: string; ticket: string; project: string; repoPath: string; path: string; branch: string;
   phase: 'reserved' | 'present' | 'removed'; owner?: Identity; token?: string;
+  cleanup?: { owner: Identity; token: string };
   protected: boolean; recoveryRef?: string; error?: string; revision?: string;
   activityUnknown?: boolean;
 }

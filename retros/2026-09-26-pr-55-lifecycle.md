@@ -24,6 +24,16 @@ conservative and do not silently discard output to satisfy a test. A nested Git
 checkout also overrides a disposable-directory allowance so an embedded manual
 checkout cannot be removed with its parent.
 
+Re-review found that local registry ownership had been applied too broadly to
+cloud PR reconciliation, that unavailable dependency counts suppressed durable
+priorities, and that cleanup held the SQLite writer lock during remote checks.
+Cloud work retains its established runner-marker reconciliation without adopting
+local checkouts. Priority sorting now survives unavailable optional metadata.
+Cleanup claims a checkout in a short transaction, then checks and removes it
+outside the writer lock. Cross-process tests prove that disk monitors can write
+during both inspection and removal while admission cannot reuse the checkout.
+Interrupted claims require a dead owner and independent inactivity evidence.
+
 No scope changes were deferred. The live CLI credential check remains a rollout
 prerequisite. JOS-291 resumes as already-approved existing work with its original
 clock preserved; overdue status blocks new starts, not that continuation.

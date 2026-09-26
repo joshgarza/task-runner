@@ -63,7 +63,7 @@ export async function authorize(config: TaskRunnerConfig, commentId: string, req
       state.tickets[request.identifier] = ticket;
     } else {
       if (!ticket || ticket.resolution) throw new Error('No unfinished registered ticket');
-      if (request.action !== 'extend' && Object.values(state.checkouts).some(c => c.ticket === ticket.identifier && c.owner)) throw new Error('Stop active execution before changing disposition');
+      if (request.action !== 'extend' && Object.values(state.checkouts).some(c => c.ticket === ticket.identifier && (c.owner || c.cleanup))) throw new Error('Stop active execution or cleanup before changing disposition');
       if (request.action === 'extend') {
         const deadline = Date.parse(request.deadline ?? '');
         if (!Number.isFinite(deadline) || deadline <= ticket.deadline || deadline <= Date.now()) throw new Error('Extension requires an explicit later future deadline');

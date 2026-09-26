@@ -24,6 +24,9 @@ capacity. A matching merged PR resolves its ticket; a closed unmerged PR does
 not. Active work or a different local revision prevents merge resolution.
 Lifecycle records completion for capacity accounting; Linear merge/close
 transitions and associated comments remain owned by `pr-health`.
+Cloud execution stays outside the local registry and retains `pr-health`
+reconciliation through its runner-written PR markers. Ordinary contextual PR
+links and unadopted local checkouts remain excluded.
 Josh can explicitly cancel a ticket. Cancellation preserves any checkout and
 recovery refs; it does not close PRs or delete output.
 
@@ -77,10 +80,14 @@ checkpointed or copied. Local HEAD, branch, remote repository and current PR
 revision must agree. Open or closed unmerged PRs also need the exact remote
 branch revision. Matching merged PR evidence preserves the published revision.
 
-Immediately before removal, ownership, activity, local and remote revision and
-file checks run again under the registry transaction lock. Cleanup creates a
-recovery ref, preserves branch refs, conditionally removes the verified checkout,
-and checks both directory and Git registration absence before releasing its slot.
+Cleanup atomically claims the checkout, preventing another cleanup or execution
+from acquiring it. Slow remote checks and removal run outside the registry writer
+lock so disk monitors can continue updating. Immediately before removal,
+ownership, activity, revision and file checks run again, with local evidence
+refreshed after remote requests. Cleanup creates a recovery ref, preserves branch
+refs, and checks both directory and Git registration absence before releasing
+the slot and claim. Restart recovery requires a dead cleanup owner and independent
+inactivity evidence before clearing an interrupted claim.
 Errors remain visible in the registry, CLI results, Linear and standup. No PRs
 are closed, projects archived or unpublished output discarded.
 

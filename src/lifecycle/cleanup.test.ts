@@ -106,6 +106,71 @@ test('revision changes during cleanup and failed or incomplete removal never rel
   }
 });
 
+test('cleanup claims block reuse while disk monitors in another process can update during inspection and removal', t => {
+  const f = fixture(t);
+  const serviceUrl = new URL('./service.ts', import.meta.url).href;
+  const registryUrl = new URL('./registry.ts', import.meta.url).href;
+  const probe = `
+    import assert from 'node:assert/strict';
+    import { monitor, reserve, reconcile } from ${JSON.stringify(serviceUrl)};
+    import { Registry } from ${JSON.stringify(registryUrl)};
+    const config = JSON.parse(process.argv[1]);
+    const disk = monitor(config, async () => [{ path: 'fixture', freeBytes: 20 * 1024 ** 3 }]);
+    await disk.check();
+    await disk.stop();
+    assert.equal(disk.signal.aborted, false);
+    new Registry(config.lifecycle.registryPath).update(s => {
+      reconcile(s, config, () => []);
+      assert.ok(s.checkouts.fixture.cleanup);
+      const admission = reserve(s, config, { identifier: 'JOS-1', id: 'one', projectName: 'task-runner' }, 'custom');
+      assert.equal(admission.hold.kind, 'lifecycle');
+      s.notices.probe = 'updated';
+    });
+  `;
+  const concurrentCheck = () => execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', probe, JSON.stringify(f.config)],
+    { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] });
+  let inspections = 0;
+  const result = cleanupCheckout(f.registry, 'fixture', f.config, false, (...args) => {
+    if (++inspections === 2) {
+      concurrentCheck();
+      assert.equal(cleanupCheckout(f.registry, 'fixture', f.config, false, f.inspect).safe, false);
+    }
+    return f.inspect(...args);
+  }, checkout => {
+    concurrentCheck();
+    return f.git(f.repo, 'worktree', 'remove', '--force', '--', checkout.path);
+  });
+  assert.equal(result.safe, true, result.reasons.join());
+  assert.equal(f.registry.read().notices.probe, 'updated');
+  assert.equal(f.registry.read().checkouts.fixture.cleanup, undefined);
+  assert.equal(f.registry.read().checkouts.fixture.phase, 'removed');
+});
+
+test('cleanup claim recovery requires a dead owner and independently verified inactivity', t => {
+  const f = fixture(t);
+  f.registry.update(s => { s.checkouts.fixture.cleanup = { token: 'interrupted', owner: { pid: 2147483647, start: 'old', boot: 'old' } }; });
+  f.registry.update(s => reconcile(s, f.config, () => ['Activity unknown']));
+  assert.ok(f.registry.read().checkouts.fixture.cleanup);
+  assert.equal(f.registry.read().checkouts.fixture.phase, 'present');
+  assert.equal(cleanupCheckout(f.registry, 'fixture', f.config, false, f.inspect).safe, false);
+  f.registry.update(s => reconcile(s, f.config, () => []));
+  assert.equal(f.registry.read().checkouts.fixture.cleanup, undefined);
+  assert.equal(cleanupCheckout(f.registry, 'fixture', f.config, false, f.inspect).safe, true);
+});
+
+test('changed ownership during the final inspection prevents removal and retains capacity', t => {
+  const f = fixture(t); let inspections = 0;
+  const result = cleanupCheckout(f.registry, 'fixture', f.config, false, (...args) => {
+    if (++inspections === 2) f.registry.update(s => { s.checkouts.fixture.protected = true; });
+    return f.inspect(...args);
+  });
+  assert.equal(result.safe, false);
+  assert.match(result.reasons.join(), /Ownership/);
+  assert.equal(existsSync(f.path), true);
+  assert.equal(f.registry.read().checkouts.fixture.phase, 'present');
+  assert.equal(f.registry.read().checkouts.fixture.cleanup, undefined);
+});
+
 test('an unregistered existing branch defers before reserving or overwriting historical output', async t => {
   const f = fixture(t);
   f.registry.update(s => { s.tickets = {}; s.checkouts = {}; });
