@@ -33,6 +33,11 @@ Cleanup claims a checkout in a short transaction, then checks and removes it
 outside the writer lock. Cross-process tests prove that disk monitors can write
 during both inspection and removal while admission cannot reuse the checkout.
 Interrupted claims require a dead owner and independent inactivity evidence.
+The subsequent review identified cloud relabeling bypassing a retained local
+ticket's ownership. Routing now checks local registration before delegation and
+returns a non-failing lifecycle hold for that conflict or unavailable ownership
+evidence. Tests preserve the original clock, output association and queue while
+confirming fresh cloud work still delegates normally.
 
 No scope changes were deferred. The live CLI credential check remains a rollout
 prerequisite. JOS-291 resumes as already-approved existing work with its original

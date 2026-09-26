@@ -27,6 +27,8 @@ transitions and associated comments remain owned by `pr-health`.
 Cloud execution stays outside the local registry and retains `pr-health`
 reconciliation through its runner-written PR markers. Ordinary contextual PR
 links and unadopted local checkouts remain excluded.
+Relabeling registered local work as cloud work returns a lifecycle hold before
+delegation. A label change does not migrate preserved output or reset its clock.
 Josh can explicitly cancel a ticket. Cancellation preserves any checkout and
 recovery refs; it does not close PRs or delete output.
 

@@ -107,7 +107,15 @@ export async function runIssue(
   }
 
   // Existing registered work can continue toward completion during capacity/age holds.
-  let registered = executionRoute === "local" ? deps.lifecycle.registryFor(config).read().tickets[identifier] : undefined;
+  let registered;
+  try {
+    registered = deps.lifecycle.registryFor(config).read().tickets[identifier];
+  } catch (err: any) {
+    return { issueId: identifier, success: false, deferred: "lifecycle", error: `Cannot verify local lifecycle ownership: ${err.message}`, attempts: 0, durationMs: Date.now() - startTime };
+  }
+  if (executionRoute === "cloud" && registered) {
+    return { issueId: identifier, success: false, deferred: "lifecycle", error: "Registered local work cannot be delegated to cloud. Preserve its output and original clock; changing execution ownership requires an explicit migration decision from Josh.", attempts: 0, durationMs: Date.now() - startTime };
+  }
   const validStates = [config.linear.todoState, "Backlog", ...(registered ? [config.linear.inProgressState, config.linear.inReviewState] : [])];
   if (!validStates.includes(issue.stateName)) {
     return failure(

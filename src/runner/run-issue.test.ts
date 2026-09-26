@@ -266,6 +266,34 @@ describe("local publication and recovery boundary", () => {
       assert.equal(result.deferred, kind); assert.equal(result.attempts, 0); assert.deepEqual(calls, []);
     });
   }
+  it("defers cloud relabeling of retained local work without changing its clock, output, or queue", async () => {
+    const { calls, deps } = setup({}, "custom-queue");
+    const state = emptyState();
+    state.tickets['JOS-294'] = { identifier: 'JOS-294', startedAt: 1, deadline: 2 } as any;
+    state.checkouts.retained = { ticket: 'JOS-294', phase: 'present', path: '/fixture/retained' } as any;
+    const before = structuredClone(state);
+    deps.lifecycle = { ...deps.lifecycle, registryFor: () => ({ read: () => state }) as any };
+    deps.fetchIssue = async () => ({ ...issue, labels: ['custom-queue', 'execution:cloud'] });
+    const result = await runIssue('JOS-294', { queueLabel: 'custom-queue' }, deps);
+    assert.equal(result.deferred, 'lifecycle'); assert.equal(result.attempts, 0);
+    assert.match(result.error ?? '', /Registered local work/);
+    assert.deepEqual(calls, []); assert.deepEqual(state, before);
+  });
+  it("still delegates fresh cloud work outside local lifecycle capacity", async () => {
+    const { calls, deps } = setup();
+    deps.fetchIssue = async () => ({ ...issue, labels: ['execution:cloud'] });
+    deps.delegateCloudIssue = async () => { calls.push('cloud'); return { issueId: 'JOS-294', success: true, attempts: 0, durationMs: 0, executionRoute: 'cloud' }; };
+    const result = await runIssue('JOS-294', {}, deps);
+    assert.equal(result.success, true); assert.equal(result.executionRoute, 'cloud');
+    assert.deepEqual(calls, ['cloud']);
+  });
+  it("defers cloud work when local ownership cannot be verified", async () => {
+    const { calls, deps } = setup();
+    deps.fetchIssue = async () => ({ ...issue, labels: ['execution:cloud'] });
+    deps.lifecycle = { ...deps.lifecycle, registryFor: () => { throw new Error('Registry unavailable'); } };
+    const result = await runIssue('JOS-294', {}, deps);
+    assert.equal(result.deferred, 'lifecycle'); assert.equal(result.attempts, 0); assert.deepEqual(calls, []);
+  });
   it("preserves custom queue labels and output when disk monitoring cancels validation", async () => {
     const { calls, deps } = setup({}, "custom-queue");
     const controller = new AbortController();
