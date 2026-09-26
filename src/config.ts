@@ -3,6 +3,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ModelReasoningEffort, TaskRunnerConfig } from "./types.ts";
+import { lifecycleConfig } from "./lifecycle/model.ts";
 
 const CONFIG_FILENAME = "task-runner.config.json";
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
@@ -63,6 +64,7 @@ export function loadConfig(): TaskRunnerConfig {
   // Merge with defaults
   const config: TaskRunnerConfig = {
     projects: raw.projects ?? {},
+    lifecycle: lifecycleConfig(raw.lifecycle, raw.projects),
     linear: {
       agentLabel: raw.linear?.agentLabel ?? "agent-ready",
       agentFailedLabel: raw.linear?.agentFailedLabel ?? "agent-failed",

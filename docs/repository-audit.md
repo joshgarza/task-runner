@@ -31,8 +31,10 @@ used as a passive local queue marker. See JOS-280 in Linear.
 
 TaskRunner requests native GitHub review and transitions work to In Review.
 The coordinating implementation agent carries the review loop through merge.
-There is no background review-fix/merge service. `pr-health` reconciles completed
-or closed PRs when invoked; the existing drain cron does not invoke it.
+There is no background review-fix/merge service. `pr-health` reconciles registered PRs when invoked. The existing scheduled drain
+also reconciles registered lifecycle state, including merged PRs and empty queues.
+See [worktree lifecycle policy](worktree-lifecycle.md) for admission, preservation
+and disk guardrails.
 
 ## PR protocol
 

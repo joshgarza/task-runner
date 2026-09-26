@@ -1,3 +1,4 @@
+import { checkLifecycle, registryFor } from "../lifecycle/service.ts";
 // Reconcile Linear issues with GitHub PR status
 
 import { spawnSync } from "node:child_process";
@@ -142,6 +143,8 @@ async function removeAgentLabel(
 export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult[]> {
   const config = loadConfig();
   const dryRun = options.dryRun ?? false;
+  await checkLifecycle(config, { dryRun });
+  const registry = registryFor(config).read();
   const prefix = dryRun ? "[dry-run] " : "";
 
   // Fetch issues in In Review and In Progress states
@@ -167,7 +170,9 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
   const results: PrHealthResult[] = [];
 
   for (const issue of issues) {
-    const prUrls = extractPrUrls(issue.comments, issue.description);
+    const registered = registry.tickets[issue.identifier];
+    if (!registered?.pr) continue;
+    const prUrls = [registered.pr.url];
 
     if (prUrls.length === 0) {
       log("INFO", issue.identifier, `${prefix}No PR URL found on issue, skipping`);
@@ -208,6 +213,10 @@ export async function prHealth(options: PrHealthOptions): Promise<PrHealthResult
     }
 
     if (prState === "MERGED") {
+      if (registered.resolution?.kind !== "merged") {
+        log("WARN", issue.identifier, "Merged PR has not passed lifecycle completion verification; preserving unfinished state");
+        continue;
+      }
       // Check idempotency: don't transition if already Done
       if (issue.stateName === config.linear.doneState) {
         log("INFO", issue.identifier, `${prefix}Already in ${config.linear.doneState}, skipping`);

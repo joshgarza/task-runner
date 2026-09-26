@@ -76,3 +76,13 @@ for (const prompt of ["fail", "timeout"]) {
     } finally { f.cleanup(); }
   });
 }
+
+test('disk safety abort cancels the native SDK turn without invoking a replacement', async () => {
+  const f = fixture(); const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 250);
+  try {
+    let calls = 0;
+    const result = await runLocalCodex({ prompt: 'timeout', cwd: f.cwd, model: 'gpt-5.6-terra', reasoningEffort: 'high', profile: 'write', timeoutMs: 10_000, context: 'sdk-test', signal: controller.signal }, async profile => { calls++; return f.client(profile); });
+    assert.equal(calls, 1); assert.equal(result.success, false); assert.ok(result.durationMs < 5000);
+  } finally { clearTimeout(timer); f.cleanup(); }
+});

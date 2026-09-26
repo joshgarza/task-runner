@@ -26,6 +26,7 @@ export function resolveGitDir(repoPath: string): string {
 }
 
 export function getWorktreePath(repoPath: string, issueId: string): string {
+  if (!/^[A-Z][A-Z0-9]*-[0-9]+$/.test(issueId)) throw new Error("Invalid issue identifier");
   return resolve(repoPath, WORKTREE_DIR, issueId);
 }
 
@@ -41,7 +42,8 @@ export function createWorktree(
   repoPath: string,
   issueId: string,
   defaultBranch: string,
-  branchPrefix?: string
+  branchPrefix?: string,
+  reuseBranch = false
 ): string {
   validateBranchName(defaultBranch);
 
@@ -56,53 +58,19 @@ export function createWorktree(
   // Fetch latest from remote
   execGit(["fetch", "origin"], { cwd: gitDir, timeout: 30_000 });
 
+  // Reuse a preserved recovery branch when recreating a removed checkout.
+  const existingBranch = execGit(["branch", "--list", branch], { cwd: gitDir });
+
+  if (existingBranch && !reuseBranch) throw new Error("Existing branch requires explicit lifecycle ownership before reuse");
+
   // Create worktree with new branch from origin/defaultBranch
   execGit(
-    ["worktree", "add", "-b", branch, worktreePath, `origin/${defaultBranch}`],
+    existingBranch
+      ? ["worktree", "add", worktreePath, branch]
+      : ["worktree", "add", "-b", branch, worktreePath, `origin/${defaultBranch}`],
     { cwd: gitDir, timeout: 30_000 }
   );
 
   log("INFO", issueId, `Created worktree at ${worktreePath} (branch: ${branch})`);
   return worktreePath;
-}
-
-/**
- * Remove a worktree and its local branch.
- * Pass deleteRemote: true to also delete the remote branch (e.g. on failure rollback).
- */
-export function removeWorktree(repoPath: string, issueId: string, deleteRemote = false, branchPrefix?: string): void {
-  const worktreePath = getWorktreePath(repoPath, issueId);
-  const branch = getBranchName(issueId, branchPrefix);
-  const gitDir = resolveGitDir(repoPath);
-
-  try {
-    execGit(["worktree", "remove", worktreePath, "--force"], {
-      cwd: gitDir,
-      timeout: 15_000,
-    });
-  } catch {
-    // May already be removed
-  }
-
-  try {
-    execGit(["branch", "-D", branch], {
-      cwd: gitDir,
-      timeout: 10_000,
-    });
-  } catch {
-    // Branch may not exist
-  }
-
-  if (deleteRemote) {
-    try {
-      execGit(["push", "origin", "--delete", branch], {
-        cwd: gitDir,
-        timeout: 15_000,
-      });
-    } catch {
-      // Remote branch may not exist
-    }
-  }
-
-  log("INFO", issueId, "Cleaned up worktree and branch");
 }

@@ -1,3 +1,4 @@
+import * as lifecycle from "../lifecycle/service.ts";
 // Full pipeline: fetch, route, implement, validate, create PR, request review.
 
 import { loadConfig, getProjectConfig } from "../config.ts";
@@ -5,7 +6,7 @@ import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, addComment, updateIssue } from "../linear/mutations.ts";
 import { resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
-import { createWorktree, removeWorktree } from "../git/worktree.ts";
+import { createWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
 import { getGitHubRepository } from "../git/remote.ts";
@@ -34,8 +35,9 @@ import type {
 } from "../types.ts";
 
 const defaultRunIssueDependencies = {
+  lifecycle,
   loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
-  transitionIssue, addComment, createWorktree, removeWorktree,
+  transitionIssue, addComment, createWorktree,
   hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
   requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
   delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
@@ -50,7 +52,7 @@ export async function runIssue(
 ): Promise<RunResult> {
   const {
     loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
-    transitionIssue, addComment, createWorktree, removeWorktree,
+    transitionIssue, addComment, createWorktree,
     hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
     requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
     delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
@@ -104,8 +106,9 @@ export async function runIssue(
     };
   }
 
-  // 2. Validate state
-  const validStates = [config.linear.todoState, "Backlog"];
+  // Existing registered work can continue toward completion during capacity/age holds.
+  const registered = executionRoute === "local" ? deps.lifecycle.registryFor(config).read().tickets[identifier] : undefined;
+  const validStates = [config.linear.todoState, "Backlog", ...(registered ? [config.linear.inProgressState, config.linear.inReviewState] : [])];
   if (!validStates.includes(issue.stateName)) {
     return failure(
       identifier,
@@ -198,6 +201,16 @@ export async function runIssue(
     return delegateCloudIssue(issue, projectConfig, config, startTime);
   }
 
+  const admission = await deps.lifecycle.acquire(config, issue, queueLabel);
+  if (admission.hold) return { issueId: identifier, success: false, deferred: admission.hold.kind, error: admission.hold.reason, attempts: 0, durationMs: Date.now() - startTime };
+  const lease = admission.lease;
+  const diskMonitor = deps.lifecycle.monitor(config);
+  let leaseReleased = false;
+  let diskPaused = false;
+  try {
+  await diskMonitor.check();
+  if (diskMonitor.signal.aborted) return deferredDisk();
+
   // 4. Transition local work to In Progress
   try {
     await transitionIssue(issue.id, issue.teamKey, config.linear.inProgressState);
@@ -228,7 +241,8 @@ export async function runIssue(
   // 6. Create worktree
   let worktreePath: string;
   try {
-    worktreePath = createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch, projectConfig.branchPrefix);
+    worktreePath = lease.reuse ? lease.path : createWorktree(projectConfig.repoPath, identifier, projectConfig.defaultBranch, projectConfig.branchPrefix, lease.reuseBranch);
+    deps.lifecycle.activate(config, lease);
   } catch (err: any) {
     await rollbackInProgress(transitionedToInProgress, issue, config, identifier, `Failed to create worktree: ${err.message}`, 0);
     return failure(identifier, `Failed to create worktree: ${err.message}`, startTime, 0);
@@ -238,14 +252,17 @@ export async function runIssue(
   let attempts = 0;
   let lastError = "";
   let pipelineSucceeded = false;
+  let completedResult: RunResult | undefined;
   let validated = false;
 
   try {
     // 7. Spawn worker agent (with retry loop)
     for (attempts = 1; attempts <= maxAttempts; attempts++) {
+      await diskMonitor.check();
+      if (diskMonitor.signal.aborted) return deferredDisk();
       log("INFO", identifier, `Attempt ${attempts}/${maxAttempts}`);
 
-      let prompt = buildWorkerPrompt(issue, projectConfig);
+      let prompt = buildWorkerPrompt(registered?.scope ? { ...issue, description: registered.scope } : issue, projectConfig);
 
       // Prepend retry context if not first attempt
       if (attempts > 1 && lastError) {
@@ -261,7 +278,11 @@ export async function runIssue(
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
         outputSchema: workerReportSchema,
+        signal: diskMonitor.signal,
+        diskConfig: config,
       });
+
+      if (diskMonitor.signal.aborted || agentResult.cancelled) return deferredDisk();
 
       // Save agent log
       const logFilename = `${identifier}-attempt${attempts}.json`;
@@ -305,12 +326,15 @@ export async function runIssue(
       }
 
       // 7. Validate output
-      const validation = validateAgentOutput(
+      const validation = await validateAgentOutput(
         worktreePath,
         projectConfig.defaultBranch,
         projectConfig,
-        identifier
+        identifier,
+        diskMonitor.signal,
+        config
       );
+      if (diskMonitor.signal.aborted || validation.cancelled) return deferredDisk();
 
       if (validation.valid) {
         validated = true;
@@ -348,6 +372,9 @@ export async function runIssue(
       return failure(identifier, "No commits produced by agent", startTime, attempts);
     }
 
+    await diskMonitor.check();
+    if (diskMonitor.signal.aborted) return deferredDisk();
+
     // 9. Push branch (runner does this, not the agent)
     try {
       pushBranch(worktreePath, branch, identifier);
@@ -358,10 +385,12 @@ export async function runIssue(
     // 10. Create PR
     let prUrl: string;
     try {
-      prUrl = createPR(worktreePath, issue, config.github.prLabels, projectConfig.defaultBranch);
+      prUrl = deps.lifecycle.reusablePR(config, lease) ?? createPR(worktreePath, issue, config.github.prLabels, projectConfig.defaultBranch);
     } catch (err: any) {
       return failure(identifier, `PR creation failed: ${err.message}`, startTime, attempts);
     }
+
+    deps.lifecycle.published(config, lease, prUrl);
 
     // 11. Link PR to Linear (retry + fallback to ensure PR URL is always persisted)
     await postPRLink(issue.id, issue.teamKey, prUrl, issue.description, identifier);
@@ -394,7 +423,7 @@ export async function runIssue(
     if (!reviewRequest.requested) {
       const error = `PR created, but failed to request native Codex review after ${reviewRequest.attempts} attempts: ${reviewRequest.error}`;
       log("ERROR", identifier, error);
-      return {
+      return completedResult = {
         issueId: identifier,
         success: false,
         executionRoute,
@@ -409,7 +438,7 @@ export async function runIssue(
     if (!inReviewTransition.transitioned) {
       const error = `PR created, but failed to transition issue to ${config.linear.inReviewState} after ${inReviewTransition.attempts} attempts: ${inReviewTransition.error}`;
       log("ERROR", identifier, error);
-      return {
+      return completedResult = {
         issueId: identifier,
         success: false,
         executionRoute,
@@ -421,7 +450,7 @@ export async function runIssue(
       };
     }
 
-    return {
+    return completedResult = {
       issueId: identifier,
       success: true,
       executionRoute,
@@ -431,13 +460,25 @@ export async function runIssue(
       attempts,
     };
   } finally {
+    deps.lifecycle.releaseLease(config, lease);
+    leaseReleased = true;
     let recoveryDequeued = false;
     // Keep failed output in place without reading/copying potentially sensitive
     // files. createWorktree refuses to overwrite it on a subsequent run.
-    if (pipelineSucceeded) {
+    if (diskPaused || diskMonitor.signal.aborted) {
+      // Safety pauses preserve queue labels, attempts and failure accounting.
+      log("WARN", identifier, `Disk hold: output retained at ${worktreePath}`);
+    } else if (pipelineSucceeded) {
       try {
-        removeWorktree(projectConfig.repoPath, identifier, false, projectConfig.branchPrefix);
+        const result = deps.lifecycle.cleanup(config, lease);
+        if (!result.safe) {
+          const reason = result.reasons.join("; ");
+          if (completedResult) completedResult.cleanupError = reason;
+          log("WARN", identifier, `Checkout retained: ${reason}`);
+          await addComment(issue.id, `TaskRunner cleanup blocked: ${reason}. Output retained at ${worktreePath}.`);
+        }
       } catch (err: any) {
+        if (completedResult) completedResult.cleanupError = err.message;
         log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
       }
     } else {
@@ -470,9 +511,19 @@ export async function runIssue(
     }
 
     // 15. Roll back to Todo if pipeline failed after transitioning to In Progress
-    if (!pipelineSucceeded && transitionedToInProgress && recoveryDequeued) {
+    if (!diskPaused && !diskMonitor.signal.aborted && !pipelineSucceeded && transitionedToInProgress && recoveryDequeued) {
       await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed", attempts);
     }
+  }
+  } finally {
+    await diskMonitor.stop();
+    if (!leaseReleased) deps.lifecycle.releaseLease(config, lease);
+    await deps.lifecycle.checkLifecycle(config);
+  }
+  function deferredDisk(): RunResult {
+    if (!diskPaused) deps.lifecycle.pauseDisk(config, lease);
+    diskPaused = true;
+    return { issueId: identifier, success: false, deferred: "disk", error: "Disk safety hold; output and queue preserved", attempts: 0, durationMs: Date.now() - startTime };
   }
 }
 

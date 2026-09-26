@@ -1,3 +1,4 @@
+import { checkLifecycle, registryFor } from "../lifecycle/service.ts";
 // Drain all "agent-ready" issues with configurable concurrency
 
 import { loadConfig } from "../config.ts";
@@ -15,8 +16,11 @@ import {
 } from "./drain-failures.ts";
 import type { DrainOptions, LinearIssue, RunResult } from "../types.ts";
 
-export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
+const drainLifecycleDependencies = { loadConfig, checkLifecycle, acquireLock, releaseLock };
+export async function drain(options: DrainOptions = {}, lifecycleDeps = drainLifecycleDependencies): Promise<RunResult[]> {
+  const { loadConfig, checkLifecycle, acquireLock, releaseLock } = lifecycleDeps;
   const config = loadConfig();
+  await checkLifecycle(config, { dryRun: options.dryRun });
 
   const label = options.label ?? config.linear.agentLabel;
   const limit = options.limit ?? 50;
@@ -51,7 +55,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     // Reconcile every quarantined project independently of the execution
     // limit, so a full queue in one project cannot starve another project's
     // missing acknowledgement markers.
-    const fetchStates = [config.linear.todoState, "Backlog"];
+    const fetchStates = [config.linear.todoState, "Backlog", config.linear.inProgressState];
     for (const projectName of projectNames) {
       let quarantinedIssues: LinearIssue[] = [];
       try {
@@ -125,7 +129,11 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
       log("INFO", null, `Found ${issues.length} issue(s) for "${projectName}"`);
 
+      const lifecycleState = registryFor(config).read();
       for (const issue of issues) {
+        // Only disk-paused In Progress work resumes automatically. Review waiting
+        // and retained execution failures require an explicit continuation request.
+        if (issue.stateName === config.linear.inProgressState && !lifecycleState.tickets[issue.identifier]?.pausedForDisk) continue;
         if (allIssues.length >= limit) break;
         allIssues.push(issue);
       }
@@ -199,7 +207,9 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
 
         // Build indexed pairs and stable-sort descending by block count
         const indexed = runnableIssues.map((issue, i) => ({ issue, blockCount: blockCounts[i], originalIndex: i }));
-        indexed.sort((a, b) => b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
+        const lifecycle = registryFor(config).read();
+        const priority = (identifier: string) => lifecycle.tickets[identifier]?.priority || 5;
+        indexed.sort((a, b) => priority(a.issue.identifier) - priority(b.issue.identifier) || b.blockCount - a.blockCount || a.originalIndex - b.originalIndex);
 
         // Replace runnableIssues in-place with sorted order
         for (let i = 0; i < indexed.length; i++) {
@@ -226,6 +236,7 @@ export async function drain(options: DrainOptions = {}): Promise<RunResult[]> {
     return results;
   } finally {
     releaseLock();
+    await checkLifecycle(config, { dryRun: options.dryRun });
   }
 }
 
@@ -239,7 +250,9 @@ export async function processDrainIssue(
   try {
     const result = await run(issue.identifier, { queueLabel });
 
-    if (result.success) {
+    if (result.deferred) {
+      log("WARN", issue.identifier, `Deferred (${result.deferred}): ${result.error}`);
+    } else if (result.success) {
       log("OK", issue.identifier, formatSuccessfulRun(result));
     } else {
       log("ERROR", issue.identifier, `Pipeline failed: ${result.error}`);
@@ -275,7 +288,8 @@ export function formatSuccessfulRun(result: RunResult): string {
 
 function logSummary(results: RunResult[], dryRun: boolean): void {
   const succeeded = results.filter((r) => r.success).length;
-  const failed = results.filter((r) => !r.success).length;
+  const failed = results.filter((r) => !r.success && !r.deferred).length;
+  const deferred = results.filter(r => r.deferred).length;
   const suffix = dryRun ? " (dry run)" : "";
-  log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${results.length} total`);
+  log("INFO", null, `Drain complete${suffix} — ${succeeded} succeeded, ${failed} failed, ${deferred} deferred, ${results.length} total`);
 }

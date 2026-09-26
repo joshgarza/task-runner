@@ -173,3 +173,20 @@ describe("drain route reporting", () => {
     assert.equal(isLocalStaleIssue({ labels: ["agent-ready", "execution:local"] }), true);
   });
 });
+
+describe('scheduled lifecycle evaluation', () => {
+  it('checks global lifecycle before and after a completely empty drain', async () => {
+    const { drain } = await import('./drain.ts');
+    const { emptyState, lifecycleConfig } = await import('../lifecycle/model.ts');
+    const events: string[] = [];
+    const config = { projects: {}, lifecycle: lifecycleConfig(), defaults: { drainConcurrency: 1, maxDrainFailures: 2 },
+      linear: { agentLabel: 'default', agentFailedLabel: 'failed', inProgressState: 'In Progress', inReviewState: 'In Review', todoState: 'Todo' } } as any;
+    const results = await drain({ label: 'custom-queue', dryRun: false }, {
+      loadConfig: () => config,
+      checkLifecycle: async c => { assert.equal(c, config); events.push('check'); return emptyState(); },
+      acquireLock: () => { events.push('lock'); return true; },
+      releaseLock: () => { events.push('release'); },
+    });
+    assert.deepEqual(results, []); assert.deepEqual(events, ['check', 'lock', 'release', 'check']);
+  });
+});
