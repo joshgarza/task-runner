@@ -22,6 +22,8 @@ checkout always requires a physical slot. Failures, retries, progress and checko
 recreation do not reset the clock. Removing a checkout releases only physical
 capacity. A matching merged PR resolves its ticket; a closed unmerged PR does
 not. Active work or a different local revision prevents merge resolution.
+Lifecycle records completion for capacity accounting; Linear merge/close
+transitions and associated comments remain owned by `pr-health`.
 Josh can explicitly cancel a ticket. Cancellation preserves any checkout and
 recovery refs; it does not close PRs or delete output.
 
@@ -166,7 +168,8 @@ Merge only after current-head native code/security review and required checks.
 Deploy reviewed code and dependencies in the scheduled launch checkout. Preserve
 the non-secret launch configuration before changing lifecycle settings. Re-run
 dry-run inventory, keep ambiguous output protected, explicitly adopt JOS-291's
-original September 18 start and obtain Josh's explicit extension before requeueing
-scheduled acceptance. The CLI requires an inherited `LINEAR_API_KEY`; the connected
+original September 18 start, and resume it as existing work under Josh's
+approved plan. Its overdue deadline blocks new starts, not its own continuation;
+no deadline extension is necessary. The CLI requires an inherited `LINEAR_API_KEY`; the connected
 Linear app does not export one. Never source secret files or invoke cron wrappers
 from an agent to work around that boundary.

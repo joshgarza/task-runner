@@ -11,7 +11,7 @@ import { assess } from './assessment.ts';
 import { getWorktreePath, getBranchName, resolveGitDir } from '../git/worktree.ts';
 import { execGit, execGh } from '../git/exec.ts';
 import { getGitHubRepository } from '../git/remote.ts';
-import { addComment, transitionIssue } from '../linear/mutations.ts';
+import { addComment } from '../linear/mutations.ts';
 import { log } from '../logger.ts';
 import type { LinearIssue, TaskRunnerConfig } from '../types.ts';
 
@@ -202,7 +202,7 @@ export async function checkLifecycle(config: TaskRunnerConfig, options: { dryRun
   if (options.dryRun) return update(registry.read());
   registry.update(update);
   // Only registered ticket/PR associations are in TaskRunner's authority.
-  for (const ticket of Object.values(registry.read().tickets).filter(t => t.pr && (!t.resolution || (t.resolution.kind === 'merged' && !t.linearReconciled)))) {
+  for (const ticket of Object.values(registry.read().tickets).filter(t => t.pr && !t.resolution)) {
     try {
       const pr = prEvidence(ticket, config.projects[ticket.project].repoPath);
       registry.update(state => {
@@ -210,10 +210,7 @@ export async function checkLifecycle(config: TaskRunnerConfig, options: { dryRun
         reconcilePublishedTicket(state, ticket, pr);
         evaluate(state, config.lifecycle);
       });
-      if (registry.read().tickets[ticket.identifier].resolution?.kind === 'merged') {
-        await transitionIssue(ticket.issueId, ticket.teamKey, config.linear.doneState);
-        registry.update(state => { state.tickets[ticket.identifier].linearReconciled = true; });
-      }
+
     } catch (e: any) { log('WARN', ticket.identifier, `Lifecycle PR reconciliation: ${e.message}`); }
   }
   const diskMonitor = monitor(config);

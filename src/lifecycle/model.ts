@@ -6,7 +6,7 @@ export interface Identity { pid: number; boot: string; start: string }
 export interface Ticket {
   identifier: string; issueId: string; teamKey: string; project: string;
   startedAt: number; deadline: number; queueLabel: string;
-  priority?: number; scope?: string; linearReconciled?: boolean; pausedForDisk?: boolean;
+  priority?: number; scope?: string; pausedForDisk?: boolean;
   resolution?: { at: number; kind: 'merged' | 'cancelled'; evidence: string };
   disposition?: { kind: 'deferred' | 'reprioritized' | 'scope-change'; reason: string; authorization: string };
   pr?: { url: string; head: string; branch: string; repository: string; state?: string };

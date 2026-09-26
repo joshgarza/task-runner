@@ -15,15 +15,11 @@ type RecentActivityFetcher = typeof fetchRecentActivity;
 
 export async function standup(
   options: StandupOptions = {},
-  fetchActivity: RecentActivityFetcher = fetchRecentActivity
+  fetchActivity: RecentActivityFetcher = fetchRecentActivity,
+  readLifecycle = () => { const config = loadConfig(); return { config, state: registryFor(config).read() }; }
 ): Promise<void> {
   const days = options.days ?? 1;
-  const config = loadConfig();
-  const lifecycle = registryFor(config).read();
-  const holds = evaluate(lifecycle, config.lifecycle);
-  if (holds.length) console.log("\nTaskRunner lifecycle holds:\n" + holds.map(h => `  - ${h.reason}`).join("\n"));
-  for (const checkout of Object.values(lifecycle.checkouts)) if (checkout.error && checkout.phase !== "removed") console.log(`Lifecycle cleanup blocker (${checkout.ticket}): ${checkout.error}`);
-  if (lifecycle.assessment) console.log(`Lifecycle assessment: ${JSON.stringify(lifecycle.assessment.report ?? lifecycle.assessment.error ?? lifecycle.assessment.status)}`);
+
 
   log("INFO", "standup", `Generating digest for last ${days} day(s)...`);
 
@@ -34,6 +30,12 @@ export async function standup(
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to query Linear activity: ${detail}`, { cause: error });
   }
+
+  const { config, state: lifecycle } = readLifecycle();
+  const holds = evaluate(lifecycle, config.lifecycle);
+  if (holds.length) console.log("\nTaskRunner lifecycle holds:\n" + holds.map(h => `  - ${h.reason}`).join("\n"));
+  for (const checkout of Object.values(lifecycle.checkouts)) if (checkout.error && checkout.phase !== "removed") console.log(`Lifecycle cleanup blocker (${checkout.ticket}): ${checkout.error}`);
+  if (lifecycle.assessment) console.log(`Lifecycle assessment: ${JSON.stringify(lifecycle.assessment.report ?? lifecycle.assessment.error ?? lifecycle.assessment.status)}`);
 
   if (issues.length === 0) {
     console.log("\nNo activity in the last " + days + " day(s).");

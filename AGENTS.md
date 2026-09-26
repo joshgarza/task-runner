@@ -15,7 +15,7 @@ and audit boundaries.
 ## Code Review Rules
 
 - Verify unattended routing fails closed. `execution:ops`, unknown execution routes, conflicting route labels, human-approval labels, and active blockers must stop before worktree creation or delegation.
-- Verify successful local runs preserve the PR link and remote branch, request native Codex review, transition Linear to In Review, and leave merge or close reconciliation to `pr-health`.
+- Verify successful local runs preserve the PR link and remote branch, request native Codex review, transition Linear to In Review, and leave Linear merge or close transitions to `pr-health`. Lifecycle checks may record verified merge evidence for capacity accounting.
 - Keep execution-permission review separate from PR code review. Workers use native `auto_review` with `on-request`; context gathering stays `read-only`/`never`. Never replace this with Full Access or custom approval bypasses.
 - Reject publication without successful validation of clean committed output. Failed runs retain their worktree and branch for triage; never silently overwrite that output on a later run.
 - Verify git and GitHub commands pass arguments without shell interpolation, especially values originating in Linear issues or configuration.
