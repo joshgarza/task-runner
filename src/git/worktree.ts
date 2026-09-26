@@ -50,8 +50,7 @@ export function createWorktree(
   const gitDir = resolveGitDir(repoPath);
 
   if (existsSync(worktreePath)) {
-    log("WARN", issueId, `Worktree already exists at ${worktreePath}, removing first`);
-    removeWorktree(repoPath, issueId, false, branchPrefix);
+    throw new Error(`Worktree already exists at ${worktreePath}. Preserve and triage it before retrying; TaskRunner will not overwrite retained output.`);
   }
 
   // Fetch latest from remote

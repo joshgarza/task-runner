@@ -75,6 +75,8 @@ export interface LinearIssue {
 
 export interface ValidationResult {
   valid: boolean;
+  /** False when retrying could accept a validation-created commit. */
+  retryable?: boolean;
   errors: string[];
   warnings: string[];
 }
@@ -82,6 +84,8 @@ export interface ValidationResult {
 // --- Run ---
 
 export interface RunOptions {
+  /** Internal handoff from drain, including its --label override. */
+  queueLabel?: string;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   maxAttempts?: number;

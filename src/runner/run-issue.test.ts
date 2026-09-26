@@ -3,7 +3,9 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { postPRLink, transitionToInReview } from "./run-issue.ts";
+import { postPRLink, transitionToInReview, runIssue } from "./run-issue.ts";
+import type { RunIssueDependencies } from "./run-issue.ts";
+import type { TaskRunnerConfig, LinearIssue } from "../types.ts";
 
 // Mock modules before importing the function under test
 const addCommentCalls: { issueId: string; body: string }[] = [];
@@ -178,5 +180,214 @@ describe("transitionToInReview", () => {
       attempts: 2,
       error: "Linear unavailable",
     });
+  });
+});
+
+describe("local publication and recovery boundary", () => {
+  const config: TaskRunnerConfig = {
+    projects: {}, github: { prLabels: [] },
+    defaults: {
+      model: "gpt-5.6-terra", reasoningEffort: "high", contextModel: "gpt-5.6-terra",
+      contextReasoningEffort: "medium", maxAttempts: 2, maxDrainFailures: 3,
+      agentTimeoutMs: 1000, drainConcurrency: 1,
+    },
+    linear: {
+      agentLabel: "agent-ready", agentFailedLabel: "agent-failed", trustedCommentAuthorIds: [],
+      needsApprovalLabel: "needs-human-approval", inProgressState: "In Progress",
+      inReviewState: "In Review", todoState: "Todo", doneState: "Done",
+    },
+  };
+  const issue: LinearIssue = {
+    id: "fixture", identifier: "JOS-294", title: "Native review fixture", description: "Complete fixture",
+    teamKey: "JOS", teamName: "Josh", stateName: "Todo", stateId: "todo",
+    projectName: "fixture", projectId: "fixture", labels: ["agent-ready"],
+    comments: [], url: "https://linear.app/example/issue/JOS-294", branchName: "unused",
+  };
+  function setup(overrides: Partial<RunIssueDependencies> = {}, queueLabel = "agent-ready") {
+    const calls: string[] = [];
+    let dequeued = false;
+    const queueLabels = [...new Set([queueLabel, "agent-ready"])];
+    const deps: RunIssueDependencies = {
+      loadConfig: () => config,
+      getProjectConfig: () => ({ repoPath: "/fixture", defaultBranch: "main", testCommand: "npm test", lintCommand: "npm run lint" }),
+      fetchIssue: async () => ({ ...issue, labels: dequeued ? [] : queueLabels }),
+      resolveTeamLabels: async () => new Map(queueLabels.map(label => [label, `${label}-id`])),
+      applyLabelChanges: async (_id, _labels, additions, removals, dryRun) => {
+        assert.deepEqual(additions, []);
+        assert.deepEqual(removals, queueLabels);
+        assert.equal(dryRun, false);
+        dequeued = true;
+        calls.push("dequeue");
+        return { labelsAdded: [], labelsRemoved: queueLabels };
+      },
+      fetchBlockingRelations: async () => [],
+      transitionIssue: async () => { calls.push("transition"); },
+      addComment: async (_id, body) => { calls.push(body); },
+      createWorktree: () => { calls.push("create-worktree"); return "/fixture/.task-runner-worktrees/JOS-294"; },
+      removeWorktree: (_path, _id, deleteRemote) => { assert.equal(deleteRemote, false); calls.push("cleanup"); },
+      hasCommits: () => true,
+      pushBranch: () => { calls.push("push"); },
+      createPR: () => { calls.push("pr"); return "https://github.com/example/repo/pull/1"; },
+      runLocalCodex: async (options) => {
+        assert.deepEqual(options.outputSchema, {
+          type: "object", properties: { outcome: { type: "string", enum: ["completed", "blocked"] }, summary: { type: "string" } },
+          required: ["outcome", "summary"], additionalProperties: false,
+        });
+        return { success: true, output: JSON.stringify({ outcome: "completed", summary: "Implemented, tested and committed" }), stderr: "", durationMs: 1, exitCode: 0 };
+      },
+      validateAgentOutput: () => { calls.push("validate"); return { valid: true, errors: [], warnings: [] }; },
+      requestCodexReview: async () => { calls.push("review"); return { requested: true, attempts: 1 }; },
+      postPRLink: async () => { calls.push("link"); },
+      transitionToInReview: async () => { calls.push("in-review"); return { transitioned: true, attempts: 1 }; },
+      rollbackInProgress: async () => { calls.push("rollback"); },
+      delegateCloudIssue: async () => { throw new Error("Unexpected cloud delegation"); },
+      quarantineDrainFailure: async () => { throw new Error("Unexpected quarantine"); },
+      logToFile: () => {},
+      ...overrides,
+    };
+    return { calls, deps };
+  }
+
+  it("validates before push, preserves the PR, requests review and cleans only successful local work", async () => {
+    const { calls, deps } = setup();
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, true);
+    assert.ok(calls.indexOf("validate") < calls.indexOf("push"));
+    assert.deepEqual(calls.filter(x => ["push", "pr", "link", "review", "in-review", "cleanup"].includes(x)),
+      ["push", "pr", "link", "review", "in-review", "cleanup"]);
+    assert.ok(!calls.includes("rollback"));
+  });
+
+  for (const failure of ["runtime", "validation", "push", "pr", "exception"]) {
+    it(`retains output after ${failure} failure and does not publish unvalidated commits`, async () => {
+      const { calls, deps } = setup();
+      if (failure === "runtime") deps.runLocalCodex = async () => ({ success: false, output: "", stderr: "approval unavailable", durationMs: 1, exitCode: 1 });
+      if (failure === "validation") deps.validateAgentOutput = () => ({ valid: false, errors: ["Tests failed"], warnings: [] });
+      if (failure === "push") deps.pushBranch = () => { throw new Error("push failed"); };
+      if (failure === "pr") deps.createPR = () => { throw new Error("PR failed"); };
+      if (failure === "exception") deps.runLocalCodex = async () => { throw new Error("unexpected worker error"); };
+      if (failure === "exception") await assert.rejects(runIssue("JOS-294", {}, deps), /unexpected worker error/);
+      else {
+        const result = await runIssue("JOS-294", {}, deps);
+        assert.equal(result.success, false);
+        assert.ok(result.attempts <= 2);
+        if (failure === "runtime") assert.equal(result.attempts, 1, "must not reset native approval context after a failed turn");
+      }
+      assert.ok(calls.some(x => x.startsWith("Retained worktree: /fixture/.task-runner-worktrees/JOS-294")));
+      assert.ok(calls.includes("rollback"));
+      assert.ok(calls.indexOf("dequeue") < calls.indexOf("rollback"));
+      assert.ok(!calls.includes("cleanup"));
+      assert.ok(!calls.includes("review"));
+      if (["runtime", "validation", "exception"].includes(failure)) assert.ok(!calls.includes("push"));
+    });
+  }
+
+  it("can retry validation failure and publish only after the later attempt validates", async () => {
+    let validations = 0;
+    const { calls, deps } = setup({ validateAgentOutput: () => ({
+      valid: ++validations === 2, errors: validations === 1 ? ["Tests failed"] : [], warnings: [],
+    }) });
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, true);
+    assert.equal(result.attempts, 2);
+    assert.equal(validations, 2);
+    assert.equal(calls.filter(x => x === "push").length, 1);
+  });
+
+  it("never publishes when the last attempt fails after an earlier validation failure", async () => {
+    let attempts = 0;
+    const { calls, deps } = setup({
+      runLocalCodex: async () => ({ success: ++attempts === 1, output: JSON.stringify({ outcome: "completed", summary: "Task done" }), stderr: "interrupted", durationMs: 1, exitCode: attempts === 1 ? 0 : 1 }),
+      validateAgentOutput: () => ({ valid: false, errors: ["Tests failed"], warnings: [] }),
+    });
+    assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
+    assert.equal(attempts, 2);
+    assert.ok(!calls.includes("push"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  for (const output of [JSON.stringify({ outcome: "blocked", summary: "Native permission review denied the commit" }), "Not JSON", JSON.stringify({ outcome: "completed" })]) {
+    it(`stops on a blocked or invalid normal-exit report: ${output}`, async () => {
+      let attempts = 0;
+      const { calls, deps } = setup({ runLocalCodex: async () => {
+        attempts++;
+        return { success: true, output, stderr: "", durationMs: 1, exitCode: 0 };
+      } });
+      const result = await runIssue("JOS-294", {}, deps);
+      assert.equal(result.success, false);
+      assert.equal(attempts, 1);
+      assert.ok(!calls.includes("validate"));
+      assert.ok(!calls.includes("push"));
+      assert.ok(!calls.includes("cleanup"));
+    });
+  }
+
+  it("does not retry or publish when validation changed the worker HEAD", async () => {
+    let validations = 0;
+    const { calls, deps } = setup({ validateAgentOutput: () => {
+      validations++;
+      return { valid: false, retryable: false, errors: ["HEAD changed during validation"], warnings: [] };
+    } });
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, false);
+    assert.equal(result.attempts, 1);
+    assert.equal(validations, 1);
+    assert.ok(!calls.includes("push"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  for (const mode of ["error", "not-persisted", "verification-error"]) {
+    it(`leaves retained failures In Progress when queue removal is ${mode}`, async () => {
+      const { calls, deps } = setup({ runLocalCodex: async () => ({
+        success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1,
+      }) });
+      if (mode === "error") deps.applyLabelChanges = async () => { throw new Error("Linear unavailable"); };
+      if (mode === "not-persisted") deps.fetchIssue = async () => issue;
+      if (mode === "verification-error") {
+        let fetches = 0;
+        deps.fetchIssue = async () => { if (++fetches > 1) throw new Error("Read failed"); return issue; };
+      }
+      assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
+      assert.ok(!calls.includes("rollback"));
+      assert.ok(!calls.includes("cleanup"));
+      assert.ok(!calls.includes("push"));
+    });
+  }
+
+  it("removes and verifies both the active custom queue and default queue on retained failure", async () => {
+    const { calls, deps } = setup({ runLocalCodex: async () => ({
+      success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1,
+    }) }, "custom-ready");
+    const result = await runIssue("JOS-294", { queueLabel: "custom-ready" }, deps);
+    assert.equal(result.success, false);
+    assert.ok(calls.indexOf("dequeue") < calls.indexOf("rollback"));
+    assert.ok(calls.includes("rollback"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  it("does not roll back if only the default label was removed but the custom queue remains", async () => {
+    const { calls, deps } = setup({
+      fetchIssue: async () => ({ ...issue, labels: ["custom-ready"] }),
+      runLocalCodex: async () => ({ success: false, output: "", stderr: "interrupted", durationMs: 1, exitCode: 1 }),
+    }, "custom-ready");
+    assert.equal((await runIssue("JOS-294", { queueLabel: "custom-ready" }, deps)).success, false);
+    assert.ok(!calls.includes("rollback"));
+    assert.ok(!calls.includes("cleanup"));
+  });
+
+  for (const labels of [["execution:ops"], ["needs-human-approval"], ["execution:unknown"], ["execution:local", "execution:cloud"]]) {
+    it(`rejects gated routing before creating a worktree: ${labels.join(", ")}`, async () => {
+      const { calls, deps } = setup({ fetchIssue: async () => ({ ...issue, labels }) });
+      assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
+      assert.ok(!calls.includes("create-worktree"));
+    });
+  }
+
+  it("does not create a worktree when active blockers remain", async () => {
+    const { calls, deps } = setup({ fetchBlockingRelations: async () => [{
+      identifier: "JOS-1", title: "Decision", done: false, stateName: "Todo",
+    }] });
+    assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
+    assert.ok(!calls.includes("create-worktree"));
   });
 });

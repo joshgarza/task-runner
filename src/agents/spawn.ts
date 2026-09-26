@@ -1,61 +1,32 @@
 // Codex SDK wrapper for agent turns
 
 import os from "node:os";
+import type { Codex, CodexOptions } from "@openai/codex-sdk";
 import { log } from "../logger.ts";
 import type { AgentResult, ModelReasoningEffort } from "../types.ts";
 
-type ApprovalMode = "never" | "on-request" | "on-failure" | "untrusted";
-type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+type Profile = "write" | "read";
+const clients = new Map<Profile, Promise<Codex>>();
 
-interface CodexThreadOptions {
-  model?: string;
-  sandboxMode?: SandboxMode;
-  workingDirectory?: string;
-  skipGitRepoCheck?: boolean;
-  modelReasoningEffort?: ModelReasoningEffort;
-  networkAccessEnabled?: boolean;
-  approvalPolicy?: ApprovalMode;
+export function codexClientOptions(profile: Profile): CodexOptions {
+  return {
+    // Do not pass Linear/API credentials or the runner's environment wholesale.
+    env: {
+      HOME: process.env.HOME ?? os.homedir(),
+      PATH: process.env.PATH ?? "",
+      TERM: process.env.TERM ?? "xterm-256color",
+    },
+    config: { approvals_reviewer: profile === "write" ? "auto_review" : "user" },
+  };
 }
 
-interface CodexTurnResult {
-  finalResponse: string;
-}
-
-interface CodexThreadLike {
-  run(input: string, turnOptions?: {
-    outputSchema?: unknown;
-    signal?: AbortSignal;
-  }): Promise<CodexTurnResult>;
-}
-
-interface CodexClientLike {
-  startThread(options?: CodexThreadOptions): CodexThreadLike;
-}
-
-interface CodexModule {
-  Codex: new (options?: {
-    env?: Record<string, string>;
-  }) => CodexClientLike;
-}
-
-let codexClientPromise: Promise<CodexClientLike> | null = null;
-
-async function getCodexClient(): Promise<CodexClientLike> {
-  if (!codexClientPromise) {
-    codexClientPromise = (async () => {
-      const module = await import("@openai/codex-sdk");
-      const { Codex } = module as CodexModule;
-      return new Codex({
-        env: {
-          HOME: process.env.HOME ?? os.homedir(),
-          PATH: process.env.PATH ?? "",
-          TERM: process.env.TERM ?? "xterm-256color",
-        },
-      });
-    })();
+async function getCodexClient(profile: Profile): Promise<Codex> {
+  if (!clients.has(profile)) {
+    clients.set(profile, import("@openai/codex-sdk").then(({ Codex }) =>
+      new Codex(codexClientOptions(profile))
+    ));
   }
-
-  return codexClientPromise;
+  return clients.get(profile)!;
 }
 
 export interface LocalCodexOptions {
@@ -63,26 +34,26 @@ export interface LocalCodexOptions {
   cwd: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  profile: "write" | "read";
+  profile: Profile;
   timeoutMs: number;
   context: string;
   outputSchema?: unknown;
 }
 
-function resolveSandboxMode(opts: LocalCodexOptions): SandboxMode {
-  return opts.profile === "write" ? "workspace-write" : "read-only";
-}
-
 /**
  * Run an agent turn through the Codex SDK.
  */
-export async function runLocalCodex(opts: LocalCodexOptions): Promise<AgentResult> {
-  const sandboxMode = resolveSandboxMode(opts);
+export async function runLocalCodex(
+  opts: LocalCodexOptions,
+  createClient: typeof getCodexClient = getCodexClient
+): Promise<AgentResult> {
+  const sandboxMode = opts.profile === "write" ? "workspace-write" : "read-only";
+  const approvalPolicy = opts.profile === "write" ? "on-request" : "never";
 
   log(
     "INFO",
     opts.context,
-    `Running local Codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} network=false`
+    `Running local Codex model=${opts.model} reasoning=${opts.reasoningEffort} sandbox=${sandboxMode} approvals=${approvalPolicy} reviewer=${opts.profile === "write" ? "auto_review" : "user"} network=false`
   );
 
   const startTime = Date.now();
@@ -98,14 +69,14 @@ export async function runLocalCodex(opts: LocalCodexOptions): Promise<AgentResul
   }, opts.timeoutMs);
 
   try {
-    const client = await getCodexClient();
+    const client = await createClient(opts.profile);
     const thread = client.startThread({
       model: opts.model,
       modelReasoningEffort: opts.reasoningEffort,
       sandboxMode,
       workingDirectory: opts.cwd,
       skipGitRepoCheck: true,
-      approvalPolicy: "never",
+      approvalPolicy,
       networkAccessEnabled: false,
     });
 

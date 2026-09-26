@@ -4,13 +4,14 @@ import { loadConfig, getProjectConfig } from "../config.ts";
 import { log, logToFile } from "../logger.ts";
 import { fetchIssue, fetchBlockingRelations } from "../linear/queries.ts";
 import { transitionIssue, addComment, updateIssue } from "../linear/mutations.ts";
+import { resolveTeamLabels, applyLabelChanges } from "../linear/labels.ts";
 import { createWorktree, removeWorktree } from "../git/worktree.ts";
 import { getBranchName } from "../git/worktree.ts";
 import { hasCommits, pushBranch, createPR } from "../git/branch.ts";
 import { getGitHubRepository } from "../git/remote.ts";
 import * as comments from "../linear/comments.ts";
 import { runLocalCodex } from "../agents/spawn.ts";
-import { buildWorkerPrompt } from "../agents/worker-prompt.ts";
+import { buildWorkerPrompt, parseWorkerReport, workerReportSchema } from "../agents/worker-prompt.ts";
 import { requestCodexReview } from "./review.ts";
 import {
   getDrainFailurePolicy,
@@ -32,10 +33,28 @@ import type {
   TaskRunnerConfig,
 } from "../types.ts";
 
+const defaultRunIssueDependencies = {
+  loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
+  transitionIssue, addComment, createWorktree, removeWorktree,
+  hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
+  requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
+  delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
+};
+
+export type RunIssueDependencies = typeof defaultRunIssueDependencies;
+
 export async function runIssue(
   identifier: string,
-  options: RunOptions = {}
+  options: RunOptions = {},
+  deps: RunIssueDependencies = defaultRunIssueDependencies
 ): Promise<RunResult> {
+  const {
+    loadConfig, getProjectConfig, fetchIssue, fetchBlockingRelations,
+    transitionIssue, addComment, createWorktree, removeWorktree,
+    hasCommits, pushBranch, createPR, runLocalCodex, validateAgentOutput,
+    requestCodexReview, postPRLink, transitionToInReview, rollbackInProgress,
+    delegateCloudIssue, quarantineDrainFailure, logToFile, resolveTeamLabels, applyLabelChanges,
+  } = deps;
   const startTime = Date.now();
   const config = loadConfig();
 
@@ -65,7 +84,8 @@ export async function runIssue(
     return failure(identifier, `Invalid execution routing: ${err.message}`, startTime, 0);
   }
 
-  const drainFailurePolicy = getDrainFailurePolicy(config);
+  const queueLabel = options.queueLabel ?? config.linear.agentLabel;
+  const drainFailurePolicy = getDrainFailurePolicy(config, queueLabel);
   const drainFailureStatus = getDrainFailureStatus(issue, drainFailurePolicy);
 
   if (options.dryRun) {
@@ -114,7 +134,7 @@ export async function runIssue(
   if (drainFailureStatus.hasAgentFailedLabel && drainFailureStatus.isLocal) {
     return failure(
       identifier,
-      `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${config.linear.agentLabel}" after human triage.`,
+      `Issue has "${config.linear.agentFailedLabel}" label. Remove it and re-add "${queueLabel}" after human triage.`,
       startTime,
       0
     );
@@ -218,6 +238,7 @@ export async function runIssue(
   let attempts = 0;
   let lastError = "";
   let pipelineSucceeded = false;
+  let validated = false;
 
   try {
     // 7. Spawn worker agent (with retry loop)
@@ -239,6 +260,7 @@ export async function runIssue(
         profile: "write",
         timeoutMs: config.defaults.agentTimeoutMs,
         context: identifier,
+        outputSchema: workerReportSchema,
       });
 
       // Save agent log
@@ -264,7 +286,22 @@ export async function runIssue(
         lastError = `Agent exited with code ${agentResult.exitCode}. stderr: ${agentResult.stderr.slice(0, 1000)}`;
         log("ERROR", identifier, `Agent failed: ${lastError.slice(0, 200)}`);
 
-        continue;
+        // A failed native turn can include an approval interruption. Do not
+        // reset its permission-review context by starting a fresh agent turn.
+        return failure(identifier, lastError, startTime, attempts);
+      }
+
+      // A normal CLI exit does not prove task completion. In particular, a
+      // denied worker can stop and report its blocker in a successful turn.
+      try {
+        const report = parseWorkerReport(agentResult.output);
+        if (report.outcome === "blocked") {
+          lastError = `Worker blocked: ${report.summary}`;
+          return failure(identifier, lastError, startTime, attempts);
+        }
+      } catch (err: any) {
+        lastError = `Invalid worker completion report: ${err.message}`;
+        return failure(identifier, lastError, startTime, attempts);
       }
 
       // 7. Validate output
@@ -276,6 +313,7 @@ export async function runIssue(
       );
 
       if (validation.valid) {
+        validated = true;
         if (validation.warnings.length > 0) {
           log("WARN", identifier, `Validation warnings: ${validation.warnings.join("; ")}`);
         }
@@ -284,6 +322,9 @@ export async function runIssue(
       } else {
         lastError = validation.errors.join("\n");
         log("ERROR", identifier, `Validation failed: ${lastError}`);
+        if (validation.retryable === false) {
+          return failure(identifier, lastError, startTime, attempts);
+        }
         if (attempts >= maxAttempts) {
           await addComment(
             issue.id,
@@ -292,6 +333,14 @@ export async function runIssue(
           return failure(identifier, `Validation failed after ${maxAttempts} attempts: ${lastError}`, startTime, attempts);
         }
       }
+    }
+
+    // Commits alone are not success: an errored/timed-out worker may have
+    // committed partial output without ever reaching validation.
+    if (!validated) {
+      attempts = Math.min(attempts, maxAttempts);
+      lastError ||= "No successfully validated worker output";
+      return failure(identifier, lastError, startTime, attempts);
     }
 
     // 8. Check we actually have commits to push
@@ -382,15 +431,46 @@ export async function runIssue(
       attempts,
     };
   } finally {
-    // 14. Clean up worktree (delete remote branch only on failure)
-    try {
-      removeWorktree(projectConfig.repoPath, identifier, !pipelineSucceeded, projectConfig.branchPrefix);
-    } catch (err: any) {
-      log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
+    let recoveryDequeued = false;
+    // Keep failed output in place without reading/copying potentially sensitive
+    // files. createWorktree refuses to overwrite it on a subsequent run.
+    if (pipelineSucceeded) {
+      try {
+        removeWorktree(projectConfig.repoPath, identifier, false, projectConfig.branchPrefix);
+      } catch (err: any) {
+        log("WARN", identifier, `Worktree cleanup failed: ${err.message}`);
+      }
+    } else {
+      const recovery = `Retained worktree: ${worktreePath} (branch: ${branch}). Preserve and triage this output before retrying. No failure cleanup was performed.`;
+      log("WARN", identifier, recovery);
+      try {
+        await addComment(issue.id, recovery);
+      } catch (err: any) {
+        log("WARN", identifier, `Failed to record retained worktree in Linear: ${err.message}`);
+      }
+      try {
+        const labels = await resolveTeamLabels(issue.teamKey);
+        if (!labels.has(queueLabel)) {
+          throw new Error(`Queue label "${queueLabel}" could not be resolved`);
+        }
+        // Clear both known entry points if the issue belongs to a custom drain
+        // queue and the configured default queue. Preserve unrelated labels.
+        const queueLabels = [...new Set([queueLabel, config.linear.agentLabel])];
+        await applyLabelChanges(issue.id, labels, [], queueLabels, false);
+        const refreshed = await fetchIssue(identifier);
+        if (queueLabels.some(label => refreshed.labels.includes(label))) {
+          throw new Error("Queue label is still present after removal");
+        }
+        recoveryDequeued = true;
+      } catch (err: any) {
+        // Do not make this ticket drain-eligible when queue removal failed or
+        // its outcome is unknown. Leave In Progress and retain its worktree.
+        log("ERROR", identifier, `Retained output requires triage; leaving In Progress because queue removal failed: ${err.message}`);
+      }
     }
 
     // 15. Roll back to Todo if pipeline failed after transitioning to In Progress
-    if (!pipelineSucceeded && transitionedToInProgress) {
+    if (!pipelineSucceeded && transitionedToInProgress && recoveryDequeued) {
       await rollbackInProgress(transitionedToInProgress, issue, config, identifier, lastError || "Pipeline failed", attempts);
     }
   }
