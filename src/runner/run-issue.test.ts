@@ -5,6 +5,7 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { postPRLink, transitionToInReview, runIssue } from "./run-issue.ts";
 import type { RunIssueDependencies } from "./run-issue.ts";
+import { emptyState, lifecycleConfig } from "../lifecycle/model.ts";
 import type { TaskRunnerConfig, LinearIssue } from "../types.ts";
 
 // Mock modules before importing the function under test
@@ -185,6 +186,7 @@ describe("transitionToInReview", () => {
 
 describe("local publication and recovery boundary", () => {
   const config: TaskRunnerConfig = {
+    lifecycle: lifecycleConfig(),
     projects: {}, github: { prLabels: [] },
     defaults: {
       model: "gpt-5.6-terra", reasoningEffort: "high", contextModel: "gpt-5.6-terra",
@@ -208,6 +210,14 @@ describe("local publication and recovery boundary", () => {
     let dequeued = false;
     const queueLabels = [...new Set([queueLabel, "agent-ready"])];
     const deps: RunIssueDependencies = {
+      lifecycle: {
+        registryFor: () => ({ read: () => emptyState() }) as any,
+        acquire: async () => ({ lease: { id: "fixture", token: "token", path: "/fixture/.task-runner-worktrees/JOS-294", reuse: false } }),
+        activate: () => {}, published: () => {}, pauseDisk: () => {}, releaseLease: () => {}, reusablePR: () => undefined,
+        cleanup: () => { calls.push("cleanup"); return { safe: true, reasons: [] }; },
+        monitor: () => ({ signal: new AbortController().signal, check: async () => {}, stop: async () => {} }),
+        checkLifecycle: async () => emptyState(),
+      } as any,
       loadConfig: () => config,
       getProjectConfig: () => ({ repoPath: "/fixture", defaultBranch: "main", testCommand: "npm test", lintCommand: "npm run lint" }),
       fetchIssue: async () => ({ ...issue, labels: dequeued ? [] : queueLabels }),
@@ -224,7 +234,6 @@ describe("local publication and recovery boundary", () => {
       transitionIssue: async () => { calls.push("transition"); },
       addComment: async (_id, body) => { calls.push(body); },
       createWorktree: () => { calls.push("create-worktree"); return "/fixture/.task-runner-worktrees/JOS-294"; },
-      removeWorktree: (_path, _id, deleteRemote) => { assert.equal(deleteRemote, false); calls.push("cleanup"); },
       hasCommits: () => true,
       pushBranch: () => { calls.push("push"); },
       createPR: () => { calls.push("pr"); return "https://github.com/example/repo/pull/1"; },
@@ -235,7 +244,7 @@ describe("local publication and recovery boundary", () => {
         });
         return { success: true, output: JSON.stringify({ outcome: "completed", summary: "Implemented, tested and committed" }), stderr: "", durationMs: 1, exitCode: 0 };
       },
-      validateAgentOutput: () => { calls.push("validate"); return { valid: true, errors: [], warnings: [] }; },
+      validateAgentOutput: async () => { calls.push("validate"); return { valid: true, errors: [], warnings: [] }; },
       requestCodexReview: async () => { calls.push("review"); return { requested: true, attempts: 1 }; },
       postPRLink: async () => { calls.push("link"); },
       transitionToInReview: async () => { calls.push("in-review"); return { transitioned: true, attempts: 1 }; },
@@ -248,6 +257,65 @@ describe("local publication and recovery boundary", () => {
     return { calls, deps };
   }
 
+
+  for (const kind of ["capacity", "age", "disk"] as const) {
+    it(`defers ${kind} without attempts, failure comments, transitions, or custom-queue removal`, async () => {
+      const { calls, deps } = setup({}, "custom-queue");
+      deps.lifecycle = { ...deps.lifecycle, acquire: async () => ({ hold: { kind, reason: "held" } }) };
+      const result = await runIssue("JOS-294", { queueLabel: "custom-queue" }, deps);
+      assert.equal(result.deferred, kind); assert.equal(result.attempts, 0); assert.deepEqual(calls, []);
+    });
+  }
+  it("defers cloud relabeling of retained local work without changing its clock, output, or queue", async () => {
+    const { calls, deps } = setup({}, "custom-queue");
+    const state = emptyState();
+    state.tickets['JOS-294'] = { identifier: 'JOS-294', startedAt: 1, deadline: 2 } as any;
+    state.checkouts.retained = { ticket: 'JOS-294', phase: 'present', path: '/fixture/retained' } as any;
+    const before = structuredClone(state);
+    deps.lifecycle = { ...deps.lifecycle, registryFor: () => ({ read: () => state }) as any };
+    deps.fetchIssue = async () => ({ ...issue, labels: ['custom-queue', 'execution:cloud'] });
+    const result = await runIssue('JOS-294', { queueLabel: 'custom-queue' }, deps);
+    assert.equal(result.deferred, 'lifecycle'); assert.equal(result.attempts, 0);
+    assert.match(result.error ?? '', /Registered local work/);
+    assert.deepEqual(calls, []); assert.deepEqual(state, before);
+  });
+  it("still delegates fresh cloud work outside local lifecycle capacity", async () => {
+    const { calls, deps } = setup();
+    deps.fetchIssue = async () => ({ ...issue, labels: ['execution:cloud'] });
+    deps.delegateCloudIssue = async () => { calls.push('cloud'); return { issueId: 'JOS-294', success: true, attempts: 0, durationMs: 0, executionRoute: 'cloud' }; };
+    const result = await runIssue('JOS-294', {}, deps);
+    assert.equal(result.success, true); assert.equal(result.executionRoute, 'cloud');
+    assert.deepEqual(calls, ['cloud']);
+  });
+  it("defers cloud work when local ownership cannot be verified", async () => {
+    const { calls, deps } = setup();
+    deps.fetchIssue = async () => ({ ...issue, labels: ['execution:cloud'] });
+    deps.lifecycle = { ...deps.lifecycle, registryFor: () => { throw new Error('Registry unavailable'); } };
+    const result = await runIssue('JOS-294', {}, deps);
+    assert.equal(result.deferred, 'lifecycle'); assert.equal(result.attempts, 0); assert.deepEqual(calls, []);
+  });
+  it("preserves custom queue labels and output when disk monitoring cancels validation", async () => {
+    const { calls, deps } = setup({}, "custom-queue");
+    const controller = new AbortController();
+    deps.lifecycle = { ...deps.lifecycle, monitor: () => ({ signal: controller.signal, check: async () => {}, stop: async () => {} }) };
+    deps.validateAgentOutput = async () => { controller.abort(); return { valid: false, errors: ["cancelled"], warnings: [] }; };
+    const result = await runIssue("JOS-294", { queueLabel: "custom-queue" }, deps);
+    assert.equal(result.deferred, "disk"); assert.equal(result.attempts, 0);
+    assert.ok(!calls.includes("dequeue")); assert.ok(!calls.includes("rollback")); assert.ok(!calls.includes("cleanup")); assert.ok(!calls.includes("push"));
+    assert.ok(!calls.some(c => /Agent Failed|Agent failed/.test(c)));
+  });
+  it("returns cleanup blockers with the published PR instead of swallowing them", async () => {
+    const { deps } = setup();
+    deps.lifecycle = { ...deps.lifecycle, cleanup: () => ({ safe: false, reasons: ["Unknown ignored output"] }) };
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, true); assert.ok(result.prUrl); assert.equal(result.cleanupError, "Unknown ignored output");
+  });
+  it("reuses an existing PR for review fixes", async () => {
+    const { calls, deps } = setup();
+    deps.lifecycle = { ...deps.lifecycle, reusablePR: () => "https://github.com/example/repo/pull/1" };
+    const result = await runIssue("JOS-294", {}, deps);
+    assert.equal(result.success, true); assert.ok(calls.includes("push")); assert.ok(!calls.includes("pr")); assert.ok(calls.includes("review"));
+  });
   it("validates before push, preserves the PR, requests review and cleans only successful local work", async () => {
     const { calls, deps } = setup();
     const result = await runIssue("JOS-294", {}, deps);
@@ -262,7 +330,7 @@ describe("local publication and recovery boundary", () => {
     it(`retains output after ${failure} failure and does not publish unvalidated commits`, async () => {
       const { calls, deps } = setup();
       if (failure === "runtime") deps.runLocalCodex = async () => ({ success: false, output: "", stderr: "approval unavailable", durationMs: 1, exitCode: 1 });
-      if (failure === "validation") deps.validateAgentOutput = () => ({ valid: false, errors: ["Tests failed"], warnings: [] });
+      if (failure === "validation") deps.validateAgentOutput = async () => ({ valid: false, errors: ["Tests failed"], warnings: [] });
       if (failure === "push") deps.pushBranch = () => { throw new Error("push failed"); };
       if (failure === "pr") deps.createPR = () => { throw new Error("PR failed"); };
       if (failure === "exception") deps.runLocalCodex = async () => { throw new Error("unexpected worker error"); };
@@ -284,7 +352,7 @@ describe("local publication and recovery boundary", () => {
 
   it("can retry validation failure and publish only after the later attempt validates", async () => {
     let validations = 0;
-    const { calls, deps } = setup({ validateAgentOutput: () => ({
+    const { calls, deps } = setup({ validateAgentOutput: async () => ({
       valid: ++validations === 2, errors: validations === 1 ? ["Tests failed"] : [], warnings: [],
     }) });
     const result = await runIssue("JOS-294", {}, deps);
@@ -298,7 +366,7 @@ describe("local publication and recovery boundary", () => {
     let attempts = 0;
     const { calls, deps } = setup({
       runLocalCodex: async () => ({ success: ++attempts === 1, output: JSON.stringify({ outcome: "completed", summary: "Task done" }), stderr: "interrupted", durationMs: 1, exitCode: attempts === 1 ? 0 : 1 }),
-      validateAgentOutput: () => ({ valid: false, errors: ["Tests failed"], warnings: [] }),
+      validateAgentOutput: async () => ({ valid: false, errors: ["Tests failed"], warnings: [] }),
     });
     assert.equal((await runIssue("JOS-294", {}, deps)).success, false);
     assert.equal(attempts, 2);
@@ -324,7 +392,7 @@ describe("local publication and recovery boundary", () => {
 
   it("does not retry or publish when validation changed the worker HEAD", async () => {
     let validations = 0;
-    const { calls, deps } = setup({ validateAgentOutput: () => {
+    const { calls, deps } = setup({ validateAgentOutput: async () => {
       validations++;
       return { valid: false, retryable: false, errors: ["HEAD changed during validation"], warnings: [] };
     } });

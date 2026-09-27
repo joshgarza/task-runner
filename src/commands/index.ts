@@ -1,3 +1,4 @@
+import { registerLifecycleCommand } from "./lifecycle.ts";
 import type { Command } from "commander";
 import { registerRunCommand } from "./run.ts";
 import { registerDrainCommand } from "./drain.ts";
@@ -15,6 +16,7 @@ import { registerRefineTicketsCommand } from "./refine-tickets.ts";
 type CommandRegistrar = (program: Command) => void;
 
 const commandRegistrars: CommandRegistrar[] = [
+  registerLifecycleCommand,
   registerRunCommand,
   registerDrainCommand,
   registerReviewCommand,

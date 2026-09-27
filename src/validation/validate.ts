@@ -1,6 +1,8 @@
 // Post-agent checks: commits exist, tests pass, lint clean
 
-import { execSync } from "node:child_process";
+import { monitoredExecution } from "../lifecycle/execution.ts";
+import type { TaskRunnerConfig } from "../types.ts";
+import { runValidationCommand } from "./process.ts";
 import { log } from "../logger.ts";
 import { execGit, validateBranchName } from "../git/exec.ts";
 import type { ValidationResult, ProjectConfig } from "../types.ts";
@@ -12,12 +14,16 @@ import type { ValidationResult, ProjectConfig } from "../types.ts";
  * - Lint passes
  * - TypeScript compiles (if buildCommand configured)
  */
-export function validateAgentOutput(
+export async function validateAgentOutput(
   worktreePath: string,
   defaultBranch: string,
   teamConfig: ProjectConfig,
-  issueId: string
-): ValidationResult {
+  issueId: string,
+  signal?: AbortSignal,
+  diskConfig?: TaskRunnerConfig
+): Promise<ValidationResult> {
+  if (diskConfig) return await monitoredExecution({ kind: 'validation', path: worktreePath, branch: defaultBranch, project: teamConfig, identifier: issueId }, diskConfig, signal) as ValidationResult;
+  if (signal?.aborted) return { valid: false, retryable: false, errors: ['Disk safety cancelled validation'], warnings: [], cancelled: true };
   const errors: string[] = [];
   const warnings: string[] = [];
   let validatedHead: string | undefined;
@@ -64,26 +70,18 @@ export function validateAgentOutput(
 
   // 2. Run tests
   try {
-    execSync(teamConfig.testCommand, {
-      cwd: worktreePath,
-      timeout: 120_000, // 2 minutes for tests
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
+    await runValidationCommand(teamConfig.testCommand, worktreePath, 120_000, signal);
     log("OK", issueId, "Tests passed");
   } catch (err: any) {
     const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
     errors.push(`Tests failed: ${output}`);
   }
 
+  if (signal?.aborted) return { valid: false, retryable: false, errors: [...errors, "Disk safety cancelled validation"], warnings };
+
   // 3. Run linter
   try {
-    execSync(teamConfig.lintCommand, {
-      cwd: worktreePath,
-      timeout: 60_000,
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
+    await runValidationCommand(teamConfig.lintCommand, worktreePath, 60_000, signal);
     log("OK", issueId, "Lint passed");
   } catch (err: any) {
     const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
@@ -93,12 +91,7 @@ export function validateAgentOutput(
   // 4. Run build/type check (if configured)
   if (teamConfig.buildCommand) {
     try {
-      execSync(teamConfig.buildCommand, {
-        cwd: worktreePath,
-        timeout: 120_000,
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
+      await runValidationCommand(teamConfig.buildCommand, worktreePath, 120_000, signal);
       log("OK", issueId, "Build/tsc passed");
     } catch (err: any) {
       const output = err.stdout?.slice(0, 500) || err.message?.slice(0, 500) || "";
@@ -106,6 +99,7 @@ export function validateAgentOutput(
     }
   }
 
+  if (signal?.aborted) return { valid: false, retryable: false, errors: [...errors, "Disk safety cancelled validation"], warnings };
   checkCommittedOutput();
 
   return {

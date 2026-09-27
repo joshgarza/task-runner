@@ -35,22 +35,34 @@ test('child process', () => assert.equal(execFileSync(process.execPath, ['-e', '
   };
 }
 
-test("validates committed output with a real child-process test", (t) => {
+test("validates committed output with a real child-process test", async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  assert.equal(validateAgentOutput(f.cwd, "main", f.config, "fixture").valid, true);
+  assert.equal((await validateAgentOutput(f.cwd, "main", f.config, "fixture")).valid, true);
 });
 
 for (const kind of ["tracked", "untracked", "test-output", "test-commit", "failed-test"]) {
-  test(`rejects ${kind} output even when task commits exist`, (t) => {
+  test(`rejects ${kind} output even when task commits exist`, async (t) => {
     const f = fixture(); t.after(f.cleanup);
     if (kind === "tracked") writeFileSync(join(f.cwd, "README.md"), "uncommitted fix\n");
     if (kind === "untracked") writeFileSync(join(f.cwd, "draft.md"), "unfinished\n");
     if (kind === "test-output") f.config.testCommand = `node -e 'require("node:fs").writeFileSync("generated.txt", "unfinished")'`;
     if (kind === "test-commit") f.config.testCommand = "git commit --allow-empty -m test-mutation";
     if (kind === "failed-test") f.config.testCommand = "node -e 'process.exit(1)'";
-    const result = validateAgentOutput(f.cwd, "main", f.config, "fixture");
+    const result = await validateAgentOutput(f.cwd, "main", f.config, "fixture");
     assert.equal(result.valid, false);
     assert.equal(result.retryable, kind !== "test-commit");
     assert.match(result.errors.join("\n"), kind === "test-commit" ? /HEAD changed/ : kind === "failed-test" ? /Tests failed/ : /Uncommitted changes/);
   });
 }
+
+test('disk cancellation interrupts synchronous-looking tests and their descendants while preserving output', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const controller = new AbortController();
+  f.config.testCommand = `node -e 'require("node:fs").writeFileSync("retained.txt", "partial output"); setInterval(()=>{}, 1000)'`;
+  const timer = setTimeout(() => controller.abort(), 300); t.after(() => clearTimeout(timer));
+  const start = Date.now();
+  const result = await validateAgentOutput(f.cwd, 'main', f.config, 'fixture', controller.signal);
+  assert.equal(result.valid, false); assert.equal(result.retryable, false);
+  assert.ok(Date.now() - start < 5000); assert.match(result.errors.join(), /cancelled/);
+  assert.ok(f.git('status', '--porcelain').includes('retained.txt'));
+});

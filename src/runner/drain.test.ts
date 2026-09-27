@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runWithConcurrency } from "../concurrency.ts";
-import { formatSuccessfulRun, isLocalStaleIssue, processDrainIssue } from "./drain.ts";
+import { formatSuccessfulRun, isLocalStaleIssue, processDrainIssue, prioritizeIssues } from "./drain.ts";
 
 describe("runWithConcurrency", () => {
   it("processes all items with concurrency=1 (sequential)", async () => {
@@ -171,5 +171,39 @@ describe("drain route reporting", () => {
   it("excludes delegated cloud work from local stale warnings", () => {
     assert.equal(isLocalStaleIssue({ labels: ["agent-ready", "execution:cloud"] }), false);
     assert.equal(isLocalStaleIssue({ labels: ["agent-ready", "execution:local"] }), true);
+  });
+});
+
+describe('scheduled lifecycle evaluation', () => {
+  it('checks global lifecycle before and after a completely empty drain', async () => {
+    const { drain } = await import('./drain.ts');
+    const { emptyState, lifecycleConfig } = await import('../lifecycle/model.ts');
+    const events: string[] = [];
+    const config = { projects: {}, lifecycle: lifecycleConfig(), defaults: { drainConcurrency: 1, maxDrainFailures: 2 },
+      linear: { agentLabel: 'default', agentFailedLabel: 'failed', inProgressState: 'In Progress', inReviewState: 'In Review', todoState: 'Todo' } } as any;
+    const results = await drain({ label: 'custom-queue', dryRun: false }, {
+      loadConfig: () => config,
+      checkLifecycle: async c => { assert.equal(c, config); events.push('check'); return emptyState(); },
+      acquireLock: () => { events.push('lock'); return true; },
+      releaseLock: () => { events.push('release'); },
+    });
+    assert.deepEqual(results, []); assert.deepEqual(events, ['check', 'lock', 'release', 'check']);
+  });
+});
+
+describe('lifecycle priority ordering', () => {
+  const queue = () => ['JOS-1', 'JOS-2', 'JOS-3', 'JOS-4'].map(identifier => ({ id: identifier, identifier, title: identifier })) as any;
+  it('keeps authorized priorities when dependency metadata is unavailable', async () => {
+    const issues = queue();
+    await prioritizeIssues(issues, { 'JOS-3': { priority: 1 }, 'JOS-1': { priority: 0 } }, async id => {
+      if (id === 'JOS-2') throw new Error('Linear unavailable');
+      return 10;
+    });
+    assert.deepEqual(issues.map((i: any) => i.identifier), ['JOS-3', 'JOS-1', 'JOS-2', 'JOS-4']);
+  });
+  it('uses dependencies and then original order within an authorized priority', async () => {
+    const issues = queue();
+    await prioritizeIssues(issues, { 'JOS-3': { priority: 1 } }, async id => id === 'JOS-4' ? 10 : 0);
+    assert.deepEqual(issues.map((i: any) => i.identifier), ['JOS-3', 'JOS-4', 'JOS-1', 'JOS-2']);
   });
 });

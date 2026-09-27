@@ -26,8 +26,8 @@ export function registerDrainCommand(program: Command): void {
         });
 
         const succeeded = results.filter((result) => result.success).length;
-        const failed = results.filter((result) => !result.success).length;
-        console.log(`\nDrain complete: ${succeeded} succeeded, ${failed} failed`);
+        const failed = results.filter((result) => !result.success && !result.deferred).length;
+        console.log(`\nDrain complete: ${succeeded} succeeded, ${failed} failed, ${results.filter(result => result.deferred).length} deferred`);
 
         if (failed > 0) process.exit(1);
       } catch (err: any) {

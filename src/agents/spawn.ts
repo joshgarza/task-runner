@@ -3,6 +3,8 @@
 import os from "node:os";
 import type { Codex, CodexOptions } from "@openai/codex-sdk";
 import { log } from "../logger.ts";
+import { monitoredExecution } from "../lifecycle/execution.ts";
+import type { TaskRunnerConfig } from "../types.ts";
 import type { AgentResult, ModelReasoningEffort } from "../types.ts";
 
 type Profile = "write" | "read";
@@ -38,6 +40,8 @@ export interface LocalCodexOptions {
   timeoutMs: number;
   context: string;
   outputSchema?: unknown;
+  signal?: AbortSignal;
+  diskConfig?: TaskRunnerConfig;
 }
 
 /**
@@ -47,6 +51,11 @@ export async function runLocalCodex(
   opts: LocalCodexOptions,
   createClient: typeof getCodexClient = getCodexClient
 ): Promise<AgentResult> {
+  if (opts.diskConfig) {
+    const { diskConfig, signal, ...options } = opts;
+    return await monitoredExecution({ kind: 'agent', options }, diskConfig, signal) as AgentResult;
+  }
+  if (opts.signal?.aborted) return { success: false, output: '', stderr: 'Disk safety cancelled native execution', durationMs: 0, exitCode: 1, cancelled: true };
   const sandboxMode = opts.profile === "write" ? "workspace-write" : "read-only";
   const approvalPolicy = opts.profile === "write" ? "on-request" : "never";
 
@@ -82,7 +91,7 @@ export async function runLocalCodex(
 
     const turn = await thread.run(opts.prompt, {
       outputSchema: opts.outputSchema,
-      signal: controller.signal,
+      signal: opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal,
     });
 
     output = turn.finalResponse.trim();

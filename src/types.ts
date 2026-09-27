@@ -14,6 +14,20 @@ export interface ProjectConfig {
   buildCommand?: string;
   team?: string;
   branchPrefix?: string;
+  disposableFolders?: string[];
+}
+
+export interface LifecycleConfig {
+  registryPath: string;
+  controlCheckout: string;
+  maxWorktrees: number;
+  maxUnfinished: number;
+  timeboxHours: number;
+  diskStopGiB: number;
+  diskResumeGiB: number;
+  diskCheckMs: number;
+  diskPaths: string[];
+  joshUserId?: string;
 }
 
 export interface LinearConfig {
@@ -47,6 +61,7 @@ export interface TaskRunnerConfig {
   linear: LinearConfig;
   defaults: DefaultsConfig;
   github: GithubConfig;
+  lifecycle: LifecycleConfig;
 }
 
 // --- Linear ---
@@ -74,6 +89,7 @@ export interface LinearIssue {
 // --- Validation ---
 
 export interface ValidationResult {
+  cancelled?: boolean;
   valid: boolean;
   /** False when retrying could accept a validation-created commit. */
   retryable?: boolean;
@@ -109,11 +125,14 @@ export interface RunResult {
   error?: string;
   durationMs: number;
   attempts: number;
+  deferred?: "capacity" | "age" | "disk" | "lifecycle";
+  cleanupError?: string;
 }
 
 // --- Agent ---
 
 export interface AgentResult {
+  cancelled?: boolean;
   success: boolean;
   output: string;
   stderr: string;

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { createProgram } from "./program.ts";
 
 const EXPECTED_OPTIONS: Record<string, string[]> = {
+  lifecycle: [],
   run: ["--model", "--reasoning-effort", "--max-attempts", "--dry-run"],
   drain: ["--label", "--project", "--limit", "--concurrency", "--dry-run"],
   review: [],
