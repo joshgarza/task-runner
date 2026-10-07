@@ -12,9 +12,14 @@ export function inside(path: string, root: string): boolean {
 export function assertRegistryLocation(path: string): void {
   const parent = dirname(resolve(path));
   if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('Registry cannot be a symlink');
+  // Resolve the nearest existing ancestor without creating a forbidden tree.
+  // The missing suffix is still checked lexically below.
+  let existing = parent;
+  while (!lstatSync(existing, { throwIfNoEntry: false })) existing = dirname(existing);
+  const resolvedParent = resolve(realpathSync(existing), relative(existing, parent));
   // Inspect both names: a symlink must not hide either a disposable source
   // path or a destination inside a checkout. No Git file contents are needed.
-  for (const start of new Set([parent, realpathSync(parent)])) {
+  for (const start of new Set([parent, resolvedParent])) {
     for (let p = start; ; p = dirname(p)) {
       const marker = resolve(p, '.git');
       const stat = lstatSync(marker, { throwIfNoEntry: false });
@@ -37,8 +42,11 @@ export class Registry {
   readonly path: string;
   constructor(path: string) { this.path = resolve(path); }
   private open(readOnly = false): DatabaseSync {
-    if (!readOnly) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
     assertRegistryLocation(this.path);
+    if (!readOnly) {
+      mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+      assertRegistryLocation(this.path);
+    }
     const db = new DatabaseSync(this.path, { readOnly });
     db.exec('PRAGMA busy_timeout=5000');
     if (!readOnly) {

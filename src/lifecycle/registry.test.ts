@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Registry } from './registry.ts';
 
@@ -15,8 +15,11 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
 }
 function rejects(path: string): void {
+  const missingParents: string[] = [];
+  for (let parent = dirname(path); !existsSync(parent); parent = dirname(parent)) missingParents.push(parent);
   assert.throws(() => new Registry(path).update(() => {}), /outside Git|cannot be a symlink/);
   assert.equal(existsSync(path), false, 'unsafe location must not receive a database');
+  for (const parent of missingParents) assert.equal(existsSync(parent), false, 'rejection must not leave directories that block future admission');
 }
 
 test('first write under empty ancestor markers persists state across registry instances', t => {
@@ -85,6 +88,7 @@ test('disposable path component is rejected at its root, in descendants and thro
   const disposable = join(root, '.task-runner-worktrees');
   rejects(join(disposable, 'lifecycle.sqlite'));
   rejects(join(disposable, 'branch/state/lifecycle.sqlite'));
+  mkdirSync(disposable);
   symlinkSync(disposable, join(root, 'alias'));
   rejects(join(root, 'alias/lifecycle.sqlite'));
   rejects(join(root, '.git/lifecycle.sqlite'));
