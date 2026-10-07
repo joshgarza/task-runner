@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { TaskRunnerConfig } from '../types.ts';
+import type { LinearClient } from '@linear/sdk';
 
 export interface Authorization {
   action: 'extend' | 'defer' | 'cancel' | 'reprioritize' | 'scope-change' | 'resume' | 'adopt';
@@ -18,7 +19,10 @@ export const authorizationPrefix = 'TaskRunner lifecycle authorization\n';
 function canonical(value: object): string { return JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))); }
 export function validateAuthorization(config: TaskRunnerConfig, request: Authorization, comment: { authorId?: string; identifier?: string; body: string }): void {
   if (!config.lifecycle.joshUserId || comment.authorId !== config.lifecycle.joshUserId || comment.identifier !== request.identifier || !comment.body.startsWith(authorizationPrefix)) throw new Error('Authorization must be a Josh-authored comment on this ticket');
-  const approved = JSON.parse(comment.body.slice(authorizationPrefix.length));
+  let approved: unknown;
+  try { approved = JSON.parse(comment.body.slice(authorizationPrefix.length)); }
+  catch { throw new Error('Authorization body must contain valid JSON'); }
+  if (!approved || typeof approved !== 'object' || Array.isArray(approved)) throw new Error('Authorization body must contain an action object');
   if (canonical(approved) !== canonical(request)) throw new Error('Requested action does not exactly match Josh authorization');
   if (!request.reason?.trim()) throw new Error('An explicit reason is required');
   for (const date of [request.deadline, request.startedAt].filter(Boolean)) {
@@ -27,13 +31,26 @@ export function validateAuthorization(config: TaskRunnerConfig, request: Authori
   if (request.action === 'reprioritize' && (!Number.isInteger(request.priority) || request.priority! < 0 || request.priority! > 4)) throw new Error('Reprioritization requires priority 0 through 4');
   if (request.action === 'scope-change' && !request.scope?.trim()) throw new Error('Scope change requires the complete approved scope');
 }
-export async function verifyAuthorization(config: TaskRunnerConfig, commentId: string, request: Authorization): Promise<string> {
+const authorizationQuery = `query LifecycleAuthorization($id: String!) {
+  comment(id: $id) { id body user { id } issue { identifier } }
+}`;
+
+export async function verifyAuthorization(config: TaskRunnerConfig, commentId: string, request: Authorization,
+  client?: LinearClient): Promise<string> {
   if (!config.lifecycle.joshUserId) throw new Error('Configure lifecycle.joshUserId before Josh-authorized actions');
   if (!request.reason?.trim()) throw new Error('An explicit reason is required');
-  const comment = await getLinearClient().comment(commentId);
-  const author = await comment.user;
-  const issue = await comment.issue;
-  validateAuthorization(config, request, { authorId: author?.id, identifier: issue?.identifier, body: comment.body });
+  const linear = client ?? getLinearClient();
+  let data: { comment?: { id?: string; body?: string; user?: { id?: string }; issue?: { identifier?: string } } };
+  try {
+    // The generated SDK comment accessor double-encodes variables. Use the
+    // explicit query transport and fetch all authority evidence in one response.
+    data = await linear.client.request(authorizationQuery, { id: commentId });
+  } catch {
+    throw new Error('Could not fetch lifecycle authorization from Linear; verify the comment ID, API access, and connectivity');
+  }
+  const comment = data?.comment;
+  if (!comment || !commentId || comment.id !== commentId || typeof comment.body !== 'string') throw new Error('Missing or malformed authorization comment from Linear');
+  validateAuthorization(config, request, { authorId: comment.user?.id, identifier: comment.issue?.identifier, body: comment.body });
   return comment.id;
 }
 export async function authorize(config: TaskRunnerConfig, commentId: string, request: Authorization,
